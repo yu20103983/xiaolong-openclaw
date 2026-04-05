@@ -13,7 +13,7 @@
 - 🎤 **离线唤醒词**：SenseVoice + Silero VAD，纯本地运行，无需联网
 - 🗣️ **自然语音交互**：支持连续对话、语音打断、上下文指令拼接
 - 🔧 **完整 AI 能力**：通过 OpenClaw 获得文件操作、命令执行、联网搜索、编程等能力
-- 🎵 **内置 Skills**：音乐播放（B站搜索下载）、天气查询等，可扩展
+- 🔧 **Skills 扩展**：通过 OpenClaw Skills 生态扩展能力，天气查询等开箱即用
 - 🎧 **蓝牙支持**：自动检测蓝牙耳机，支持全双工/半双工自适应
 - ⚡ **流式响应**：TTS 边合成边播放，首字延迟低
 
@@ -120,24 +120,9 @@ INPUT_SILENCE_TIMEOUT = 4.0    # 静音超时（秒）
 CONTINUOUS_SILENCE_TIMEOUT = 30 # 连续对话沉默超时（秒）
 ```
 
-## 🎵 Skills
+## 🔧 Skills
 
-### 音乐播放
-
-内置 music-player skill，从 B 站搜索下载音频并播放：
-
-```bash
-# 安装到 OpenClaw workspace（首次需要）
-mkdir -p ~/.openclaw/workspace/skills/music-player
-cp .pi/skills/music-player/* ~/.openclaw/workspace/skills/music-player/
-
-# 需要 yt-dlp
-pip install yt-dlp
-```
-
-安装后说 "小龙，播放一首xxx" 即可。
-
-### 添加自定义 Skill
+OpenClaw 内置多种 Skills（天气、GitHub、编程等），也可添加自定义 Skill：
 
 1. 在 `~/.openclaw/workspace/skills/your-skill/` 下创建 `SKILL.md` 和脚本
 2. 运行 `npx openclaw skills list` 确认加载

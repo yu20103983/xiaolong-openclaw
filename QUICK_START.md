@@ -40,13 +40,6 @@ npm install
 download_models.bat
 ```
 
-### 可选依赖
-
-```bash
-# 音乐播放功能需要 yt-dlp
-pip install yt-dlp
-```
-
 ## 第三步：配置 OpenClaw
 
 OpenClaw 是 AI Agent 框架，负责与大语言模型交互。
@@ -75,18 +68,6 @@ npx openclaw gateway
 ```
 
 > **保持这个终端窗口运行**，Gateway 需要一直在后台。
-
-### 3.3 安装音乐 Skill（可选）
-
-```bash
-# Windows
-mkdir %USERPROFILE%\.openclaw\workspace\skills\music-player
-copy .pi\skills\music-player\* %USERPROFILE%\.openclaw\workspace\skills\music-player\
-
-# 验证
-npx openclaw skills list
-# 应看到 music-player 状态为 ✓ ready
-```
 
 ## 第四步：修改配置（可选）
 
@@ -133,7 +114,7 @@ start.bat
 
 1. 对麦克风说 **"小龙小龙"** → 听到 "我在，请说"
 2. 说 **"帮我查一下天气"** → AI 查询并语音回复
-3. 说 **"小龙，播放一首歌"** → 搜索并播放音乐
+3. 说 **"小龙，今天天气怎么样"** → AI 查询并语音回复
 4. 播报过程中说 **"终止"** → 打断当前播报
 5. 说 **"小龙小龙，退下"** → 进入休眠
 

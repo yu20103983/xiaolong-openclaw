@@ -61,11 +61,6 @@ def _check_duplex():
 
 _check_duplex()
 
-# 音乐播放 skill 绝对路径
-_MUSIC_PLAYER_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..', '.pi', 'skills', 'music-player', 'music_player.py')
-)
-
 SYSTEM_PROMPT = f"""你是"小龙",一个运行在用户电脑上的语音助手。你通过耳机与用户进行实时语音对话。
 
 ★★★ 交互方式说明 ★★★
@@ -93,7 +88,6 @@ SYSTEM_PROMPT = f"""你是"小龙",一个运行在用户电脑上的语音助手
 行动原则：
 - 用户让你做什么就做什么,不要反问"你确定吗"
 - 缺少工具就安装,缺少文件就下载,主动解决问题
-- 播放音乐请使用 music-player skill
 - 查询信息可以用 curl 访问搜索引擎或 API
 - 充分发挥你的编程和系统操作能力,做一个真正有用的助手
 

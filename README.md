@@ -135,9 +135,8 @@ pip install yt-dlp
 
 ### 添加自定义 Skill
 
-1. 在 `.pi/skills/your-skill/` 下创建 `SKILL.md` 和脚本
-2. 复制到 `~/.openclaw/workspace/skills/your-skill/`
-3. 运行 `npx openclaw skills list` 确认加载
+1. 在 `~/.openclaw/workspace/skills/your-skill/` 下创建 `SKILL.md` 和脚本
+2. 运行 `npx openclaw skills list` 确认加载
 
 ## 🏗️ 项目结构
 
@@ -152,8 +151,6 @@ pip install yt-dlp
 │   └── audio_io.py           # 音频 I/O：设备检测、录音、重采样
 ├── bin/
 │   └── gateway-bridge.js     # Node.js Bridge：Python ↔ OpenClaw Gateway
-├── .pi/skills/               # 本地 Skills
-│   └── music-player/         # 音乐播放 skill
 ├── tests/                    # 测试脚本
 ├── setup.bat                 # 一键安装
 ├── start.bat                 # 启动脚本

@@ -1,7 +1,7 @@
 # 🐉 小龙语音助手
 
 <p align="center">
-  <img src="xiaolong_preview.png" width="128" alt="小龙">
+  <img src="xiaolong_preview.png" width="200" alt="小龙">
 </p>
 
 基于唤醒词的中文语音 AI 助手，通过 [OpenClaw](https://github.com/nicholasgriffintn/openclaw) Gateway 获得完整的工具调用和 Skills 生态能力。

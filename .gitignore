@@ -1,0 +1,53 @@
+# Byte-compiled
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node
+node_modules/
+package-lock.json
+
+# Models (too large for git)
+models/
+
+# Binary tools
+bin/ffmpeg.zip
+
+# Cache
+cache/
+
+# Audio files
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.flac
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Music player runtime data
+.pi/skills/music-player/music_cache/
+.pi/skills/music-player/favorites.json
+.pi/skills/music-player/blacklist.json
+.pi/skills/music-player/queue.json
+
+# Logs & temp
+*.log
+*.tmp
+pi_err.txt
+gateway.log

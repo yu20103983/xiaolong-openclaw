@@ -1,0 +1,15 @@
+{
+  "name": "xiaolong-openclaw",
+  "version": "1.0.0",
+  "description": "小龙 - 基于唤醒词的中文语音 AI 助手 (OpenClaw 版)",
+  "private": true,
+  "scripts": {
+    "start": "set PYTHONIOENCODING=utf-8 && python -X utf8 src/main.py"
+  },
+  "keywords": ["voice-assistant", "chinese", "asr", "tts", "openclaw"],
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "openclaw": "latest"
+  }
+}

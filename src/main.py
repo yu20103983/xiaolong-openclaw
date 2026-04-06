@@ -145,6 +145,15 @@ def clean_for_speech(text):
     return text.strip()
 
 
+def play_notify_sound():
+    """播放系统提示音（不打断当前音频播放）"""
+    try:
+        import winsound
+        winsound.PlaySound('SystemExclamation', winsound.SND_ALIAS | winsound.SND_ASYNC | winsound.SND_NOSTOP)
+    except Exception:
+        pass
+
+
 def resample_to_a2dp(audio_float32):
     """24kHz float32 → A2DP采样率 float32"""
     return fast_resample(audio_float32, 24000, A2DP_SR)
@@ -286,6 +295,7 @@ def start_interrupt_listen(stop_event, text_done_event=None):
                 cmd = cmd_after
         if cmd and len(cmd) > 1:
             session.queue_command(cmd)
+            play_notify_sound()
             print(f"  [排队] 已收到指令，等待当前任务完成: {cmd}", flush=True)
 
     asr.set_callbacks(on_final=_on_final)
@@ -703,7 +713,8 @@ def on_command(cmd):
     if processing:
         # 处理中收到新指令，排队并提示用户
         session.queue_command(cmd)
-        speak_async("收到，等我处理完当前任务")
+        play_notify_sound()
+        print(f"  [排队] 处理中收到指令: {cmd}", flush=True)
         return
 
     # 检测长输入模式触发

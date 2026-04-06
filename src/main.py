@@ -268,9 +268,25 @@ def start_interrupt_listen(stop_event, text_done_event=None):
                 or 'stop' in text.lower()):
             stop_event.set()
             return
-        # 非终止词: 只在 agent 输出结束后才接受指令排队
+        # 非终止词: agent输出结束后传给session正常处理
         if text_done_event and text_done_event.is_set():
             session.process_text(text, is_final=True)
+            return
+        # agent还在输出中: 检测是否包含唤醒词+指令，排队并提示
+        from session_controller import _has_wake_word, _strip_wake_prefix, _is_only_wake_word, _extract_after_long
+        cmd = None
+        if _has_wake_word(text) and not _is_only_wake_word(text):
+            cmd = _strip_wake_prefix(text)
+            if cmd:
+                cmd = re.sub(r'^[,，::。.、\s]+', '', cmd)
+                cmd = re.sub(r'[。..！!？?]+$', '', cmd).strip()
+        if not cmd or len(cmd) <= 1:
+            cmd_after = _extract_after_long(text)
+            if cmd_after:
+                cmd = cmd_after
+        if cmd and len(cmd) > 1:
+            session.queue_command(cmd)
+            speak_async("收到，等我处理完当前任务")
 
     asr.set_callbacks(on_final=_on_final)
     if is_duplex:

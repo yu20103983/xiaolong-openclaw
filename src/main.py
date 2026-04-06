@@ -257,7 +257,7 @@ _STOP_SINGLE_CHARS = {'停', '止', '终'}
 def start_interrupt_listen(stop_event, text_done_event=None):
     """开始监听(非阻塞)。
     - '终止' 随时生效，立即设置 stop_event
-    - 其他语音: 只在 text_done_event 已设置后才接受，直接排队
+    - 其他语音: 只在 text_done_event 已设置后才传给 session 排队
     """
     def _on_final(text):
         print(f"\n  [监听] {text}", flush=True)
@@ -268,13 +268,9 @@ def start_interrupt_listen(stop_event, text_done_event=None):
                 or 'stop' in text.lower()):
             stop_event.set()
             return
-        # 非终止词: 只在 agent 输出结束后才接受
+        # 非终止词: 只在 agent 输出结束后才接受指令排队
         if text_done_event and text_done_event.is_set():
-            # 直接排队，不要求唤醒词前缀
-            cmd = re.sub(r'^[,，::。.、\s]+', '', text)
-            cmd = re.sub(r'[。．.\uff01!？?]+$', '', cmd).strip()
-            if cmd and len(cmd) > 1:
-                session.queue_command(cmd)
+            session.process_text(text, is_final=True)
 
     asr.set_callbacks(on_final=_on_final)
     if is_duplex:

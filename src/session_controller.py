@@ -40,7 +40,7 @@ _CONTINUOUS_END_PATTERNS = [
 
 # "小龙" 的常见 ASR 误识别变体
 _XIAO_CHARS = r"[小肖晓消笑筱享向想响销削校效啸歇]"
-_LONG_CHARS = r"[龙隆笼聋拢弄农浓侬绒容融荣龍]"
+_LONG_CHARS = r"[龙隆笼聋拢弄农浓侬绒容融荣龍东]"
 # 匹配一个 "小龙" (含变体),中间允许0-1个杂字
 _ONE_XL = _XIAO_CHARS + r".{0,1}" + _LONG_CHARS
 # 匹配 "小龙小龙" (两次),中间允许杂字/标点

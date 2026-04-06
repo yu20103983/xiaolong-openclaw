@@ -167,22 +167,29 @@ input_timer = None           # 静音超时定时器
 
 
 # ============ 提示音 ============
-def _generate_beep(freq, duration=0.12, volume=0.3):
-    """生成简单正弦波提示音"""
-    t = np.linspace(0, duration, int(24000 * duration), dtype=np.float32)
-    # 淡入淡出避免卡啲声
-    envelope = np.ones_like(t)
-    fade = int(24000 * 0.01)
-    envelope[:fade] = np.linspace(0, 1, fade)
-    envelope[-fade:] = np.linspace(1, 0, fade)
-    return (np.sin(2 * np.pi * freq * t) * volume * envelope).astype(np.float32)
+def _generate_chime(freq, duration=0.15, volume=0.5):
+    """生成清亮的铃声提示音(带谐波+快速衰减)"""
+    sr = 24000
+    t = np.linspace(0, duration, int(sr * duration), dtype=np.float32)
+    # 基频 + 二次谐波 + 三次谐波, 模拟铃声音色
+    tone = (
+        np.sin(2 * np.pi * freq * t) * 1.0 +
+        np.sin(2 * np.pi * freq * 2 * t) * 0.3 +
+        np.sin(2 * np.pi * freq * 3 * t) * 0.1
+    )
+    # 快速起音 + 指数衰减, 模拟敲击感
+    envelope = np.exp(-t * 12) * (1 - np.exp(-t * 500))
+    return (tone * envelope * volume / 1.4).astype(np.float32)
 
-# 送入提示音: 高音“嘼”
-BEEP_SEND = _generate_beep(880, duration=0.1, volume=0.25)
-# 就绪提示音: 低音“嘼嘼”两声
-_b1 = _generate_beep(660, duration=0.08, volume=0.2)
-_b2 = _generate_beep(880, duration=0.08, volume=0.2)
-BEEP_READY = np.concatenate([_b1, np.zeros(int(24000 * 0.05), dtype=np.float32), _b2])
+# 送入提示音: 清亮上行双音 "叮咚" (C6→E6)
+_c1 = _generate_chime(1047, duration=0.12, volume=0.55)  # C6
+_c2 = _generate_chime(1319, duration=0.12, volume=0.55)  # E6
+BEEP_SEND = np.concatenate([_c1, np.zeros(int(24000 * 0.03), dtype=np.float32), _c2])
+
+# 就绪提示音: 柔和下行双音 "咚叮" (E6→G6)
+_r1 = _generate_chime(1319, duration=0.1, volume=0.45)   # E6
+_r2 = _generate_chime(1568, duration=0.15, volume=0.5)   # G6
+BEEP_READY = np.concatenate([_r1, np.zeros(int(24000 * 0.03), dtype=np.float32), _r2])
 
 def play_beep(beep_audio):
     """播放提示音(非阻塞但等完成)"""

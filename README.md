@@ -6,18 +6,23 @@
 
 让 [OpenClaw](https://github.com/openclaw/openclaw) 听你说话。
 
-再也不用守在屏幕前等 OpenClaw 出结果了。戴上耳机，说句“小龙小龙，帮我把那个项目重构一下”，然后起身倒杯水、看会儿手机、或者继续摸鱼。OpenClaw 在后台读代码、执行命令、安装依赖、联网搜索——干完了耳机里直接告诉你结果。你只需要张嘴，不需要动手，也不需要盯着屏幕。
+再也不用守在屏幕前等 OpenClaw 出结果了。戴上耳机，说句"小龙小龙，帮我把那个项目重构一下"，然后起身倒杯水、看会儿手机、或者继续摸鱼。OpenClaw 在后台读代码、执行命令、安装依赖、联网搜索——干完了耳机里直接告诉你结果。你只需要张嘴，不需要动手，也不需要盯着屏幕。
 
-**说“小龙小龙”唤醒 → 语音发指令 → OpenClaw 干活 → 语音报结果**
+**说"小龙小龙"唤醒 → 语音发指令 → OpenClaw 干活 → 语音报结果**
 
 ## ✨ 特性
 
-- 🎤 **离线唤醒词**:SenseVoice + Silero VAD,纯本地运行,无需联网
-- 🗣️ **自然语音交互**:支持连续对话、语音打断、上下文指令拼接
-- 🔧 **完整 AI 能力**:通过 OpenClaw 获得文件操作、命令执行、联网搜索、编程等能力
-- 🔧 **Skills 扩展**:通过 OpenClaw Skills 生态扩展能力,天气查询等开箱即用
-- 🎧 **蓝牙支持**:自动检测蓝牙耳机,支持全双工/半双工自适应
-- ⚡ **流式响应**:TTS 边合成边播放,首字延迟低
+- 🎤 **离线唤醒词**：SenseVoice + Silero VAD，纯本地运行，无需联网
+- 🗣️ **自然语音交互**：支持连续对话、语音打断、上下文指令拼接
+- 🔧 **完整 AI 能力**：通过 OpenClaw 获得文件操作、命令执行、联网搜索、编程等能力
+- 🔧 **Skills 扩展**：通过 OpenClaw Skills 生态扩展能力，天气查询等开箱即用
+- 🎧 **蓝牙支持**：自动检测蓝牙耳机，支持全双工/半双工自适应
+- ⚡ **流式响应**：TTS 边合成边播放，首字延迟低
+- 🛡️ **TTS 三级回退**：Edge TTS（在线高音质）→ Matcha-TTS（本地离线）→ Windows SAPI（保底），网络不好也不卡
+- 🚀 **并行启动**：ASR、TTS、Agent 并行初始化，启动快 2-3 秒
+- 🧠 **智能输入超时**：短指令 1.5 秒快速发送，长句 4 秒等待，响应更快
+- 🎯 **宽容唤醒词**：支持 16 种"小"+ 14 种"龙"的近音变体，ASR 识别偏差也能唤醒
+- 😴 **丰富休眠表达**：退下、再见、拜拜、不聊了、先这样等 12+ 种自然表达
 
 ## 📐 架构
 
@@ -28,7 +33,7 @@
                                            ↓
                               [OpenClaw Gateway Agent]
                                            ↓
-                                    [Edge TTS 合成]
+                              [Edge TTS / Matcha-TTS / SAPI]
                                            ↓
                                         扬声器
 ```
@@ -48,7 +53,7 @@
 ### 一键安装
 
 ```bash
-git clone https://github.com/yourname/xiaolong-openclaw.git
+git clone https://github.com/yu20103983/xiaolong-openclaw.git
 cd xiaolong-openclaw
 
 # 安装依赖 + 下载模型
@@ -57,74 +62,84 @@ setup.bat
 
 ### 配置 OpenClaw
 
-首次使用需配置 OpenClaw Gateway:
+首次使用需配置 OpenClaw Gateway：
 
 ```bash
-# 初始化 OpenClaw 配置(设置 API Key 等)
+# 初始化 OpenClaw 配置（设置 API Key 等）
 npx openclaw config
 
-# 启动 Gateway(保持运行)
+# 启动 Gateway（保持运行）
 npx openclaw gateway
 ```
 
-> **注意**:需要配置 LLM 提供商的 API Key(如 Anthropic、OpenAI 等)。
+> **注意**：需要配置 LLM 提供商的 API Key（如 Anthropic、OpenAI 等）。
 > 运行 `npx openclaw config` 会引导你完成配置。
 
 ### 启动
 
 ```bash
-# 新终端,启动语音助手
+# 新终端，启动语音助手
 start.bat
 ```
 
-说 **"小龙小龙"** 唤醒,然后说指令即可。
+说 **"小龙小龙"** 唤醒，然后说指令即可。
 
 ## 🎯 使用方式
 
 | 操作 | 说法示例 |
 |------|---------|
 | 唤醒 | "小龙小龙" |
-| 发指令 | "小龙,帮我查一下天气" |
-| 连续对话 | "小龙,我们聊聊天"(agent 自动开启) |
-| 打断播报 | 说 "终止" |
-| 休眠 | "小龙小龙,退下" |
+| 发指令 | "小龙，帮我查一下天气" |
+| 连续对话 | "小龙，我们聊聊天"（agent 自动开启） |
+| 打断播报 | 说 "终止" 或 "停止" |
+| 休眠 | "小龙退下" / "小龙再见" / "小龙拜拜" / "小龙不聊了" |
 
 ### 指令输入
 
-- 说完指令后,等待 4 秒静音自动发送
-- 多段输入会自动拼接(说完一段后继续说,会合并后一起发送)
+- **智能超时**：短指令（如"几点了""播放音乐"）1.5 秒自动发送，长句 4 秒静音后发送
+- 多段输入会自动拼接（说完一段后继续说，会合并后一起发送）
 - 说 "好了" 可立即发送
+
+### 唤醒词容错
+
+支持大量近音变体，以下都能唤醒：
+- 小龙、肖龙、晓龙、消隆、笑笼、筱龙……
+- 即使 ASR 识别有偏差，大部分情况都能正确唤醒
 
 ### 连续对话
 
-Agent 会根据场景自动开启连续对话模式(如聊天、口语练习等),开启后不需要说唤醒词,直接说话即可。
+Agent 会根据场景自动开启连续对话模式（如聊天、口语练习等），开启后不需要说唤醒词，直接说话即可。
 
 ## ⚙️ 配置
 
-编辑 `src/config.py`:
+编辑 `src/config.py`：
 
 ```python
-# 音频设备(None = 自动检测)
+# 音频设备（None = 自动检测）
 A2DP_ID = None          # 输出设备 ID
 HFP_IN = None           # 输入设备 ID
-DUPLEX_MODE = None       # 全双工模式: True/False/None(自动)
+DUPLEX_MODE = None       # 全双工模式: True/False/None（自动）
+PREFER_LOCAL = False     # 优先本地设备（跳过蓝牙检测）
 
 # TTS
+TTS_ENGINE = "edge"      # TTS 引擎: edge（在线高音质）/ local（离线快速）
 TTS_VOICE = "xiaoxiao"   # 语音: xiaoxiao/yunxi/xiaoyi/yunjian
 TTS_RATE = "+10%"        # 语速
+TTS_LOCAL_MODEL = "matcha-zh-baker"  # 本地备选模型
 
 # Agent
 PI_PROVIDER = "anthropic"              # OpenClaw provider
 PI_MODEL = "claude-sonnet-4-20250514"  # 模型名称
 
 # 会话
-INPUT_SILENCE_TIMEOUT = 4.0    # 静音超时(秒)
-CONTINUOUS_SILENCE_TIMEOUT = 30 # 连续对话沉默超时(秒)
+INPUT_SILENCE_TIMEOUT = 4.0     # 长输入静音超时（秒）
+INPUT_QUICK_TIMEOUT = 1.5       # 短指令快速超时（秒）
+CONTINUOUS_SILENCE_TIMEOUT = 30  # 连续对话沉默超时（秒）
 ```
 
 ## 🔧 Skills
 
-OpenClaw 内置多种 Skills(天气、GitHub、编程等),也可添加自定义 Skill:
+OpenClaw 内置多种 Skills（天气、GitHub、编程等），也可添加自定义 Skill：
 
 1. 在 `~/.openclaw/workspace/skills/your-skill/` 下创建 `SKILL.md` 和脚本
 2. 运行 `npx openclaw skills list` 确认加载
@@ -133,15 +148,18 @@ OpenClaw 内置多种 Skills(天气、GitHub、编程等),也可添加自定义 
 
 ```
 ├── src/
-│   ├── main.py              # 主程序:唤醒→识别→Agent→TTS 流水线
+│   ├── main.py              # 主程序：唤醒→识别→Agent→TTS 流水线
 │   ├── config.py             # 全局配置
-│   ├── session_controller.py # 会话状态机:唤醒词检测、指令分发
-│   ├── agent_client.py       # OpenClaw Gateway 客户端
-│   ├── asr_engine.py         # ASR 引擎:VAD + SenseVoice
-│   ├── tts_engine.py         # TTS 引擎:Edge TTS + 缓存
-│   └── audio_io.py           # 音频 I/O:设备检测、录音、重采样
+│   ├── session_controller.py # 会话状态机：唤醒词检测、指令分发
+│   ├── agent_client.py       # OpenClaw Gateway 客户端（事件驱动连接）
+│   ├── asr_engine.py         # ASR 引擎：VAD + SenseVoice（异步线程）
+│   ├── tts_engine.py         # TTS 引擎：Edge TTS + Matcha-TTS + SAPI 三级回退
+│   └── audio_io.py           # 音频 I/O：设备检测、录音、重采样
 ├── bin/
-│   └── gateway-bridge.js     # Node.js Bridge:Python ↔ OpenClaw Gateway
+│   └── gateway-bridge.js     # Node.js Bridge：Python ↔ OpenClaw Gateway
+├── models/                   # ASR/TTS 模型文件
+├── assets/                   # 提示音文件
+├── cache/                    # TTS 磁盘缓存
 ├── tests/                    # 测试脚本
 ├── setup.bat                 # 一键安装
 ├── start.bat                 # 启动脚本
@@ -156,10 +174,10 @@ OpenClaw 内置多种 Skills(天气、GitHub、编程等),也可添加自定义 
 # 测试音频设备检测
 python -X utf8 tests/test_devices.py
 
-# 测试 ASR(麦克风实时识别)
+# 测试 ASR（麦克风实时识别）
 python -X utf8 tests/test_asr.py
 
-# 测试 TTS(合成并播放)
+# 测试 TTS（合成并播放）
 python -X utf8 tests/test_tts.py
 
 # 测试唤醒词匹配
@@ -168,35 +186,38 @@ python -X utf8 src/session_controller.py
 
 ### 日志格式
 
-运行时终端会显示清晰的对话日志:
+运行时终端会显示清晰的对话日志：
 
 ```
 ==================================================
 [用户] 帮我查一下今天的天气
 ==================================================
-好的,我来查一下。深圳今天局部多云,气温25度...
+好的，我来查一下。深圳今天局部多云，气温25度...
 --------------------------------------------------
-[小龙] 好的,我来查一下。深圳今天局部多云,气温25度,适合出门。
+[小龙] 好的，我来查一下。深圳今天局部多云，气温25度，适合出门。
 --------------------------------------------------
 ```
 
 ## 📝 常见问题
 
-**Q: 启动后没有声音?**
-检查音频设备:`python -X utf8 tests/test_devices.py`,确认输入输出设备正确。
+**Q: 启动后没有声音？**
+检查音频设备：`python -X utf8 tests/test_devices.py`，确认输入输出设备正确。
 
-**Q: OpenClaw Gateway 连接失败?**
-确保 Gateway 已启动:`npx openclaw gateway`,默认端口 18789。
+**Q: OpenClaw Gateway 连接失败？**
+确保 Gateway 已启动：`npx openclaw gateway`，默认端口 18789。
 
-**Q: 模型下载失败?**
-设置代理后重试:
+**Q: 模型下载失败？**
+设置代理后重试：
 ```bash
 set HTTPS_PROXY=http://127.0.0.1:7890
 download_models.bat
 ```
 
-**Q: 唤醒词识别不灵敏?**
+**Q: 唤醒词识别不灵敏？**
 可在 `src/session_controller.py` 中调整 `_XIAO_CHARS` 和 `_LONG_CHARS` 的近音字集合。
+
+**Q: TTS 经常超时？**
+在 `src/config.py` 中设置 `TTS_ENGINE = "local"` 切换到本地离线 TTS，或保持 `"edge"` 模式，连续失败 3 次后会自动回退到本地。
 
 ## 📄 License
 

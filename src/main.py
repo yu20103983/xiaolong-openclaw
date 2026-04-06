@@ -286,7 +286,7 @@ def start_interrupt_listen(stop_event, text_done_event=None):
                 cmd = cmd_after
         if cmd and len(cmd) > 1:
             session.queue_command(cmd)
-            speak_async("收到，等我处理完当前任务")
+            print(f"  [排队] 已收到指令，等待当前任务完成: {cmd}", flush=True)
 
     asr.set_callbacks(on_final=_on_final)
     if is_duplex:

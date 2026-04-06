@@ -131,12 +131,24 @@ def resample_to_a2dp(audio_float32):
     return fast_resample(audio_float32, 24000, A2DP_SR)
 
 
-def play_audio(audio_float32, first=False):
+def play_audio(audio_float32, first=False, interrupt_check=None):
+    """播放音频。interrupt_check 为可选回调,返回 True 时立即中断播放。
+    返回 True 表示被中断, False 表示正常播完。"""
     out = resample_to_a2dp(audio_float32)
     if first and BT_SILENCE_PREFIX > 0:
         out = np.concatenate([np.zeros(int(A2DP_SR * BT_SILENCE_PREFIX), dtype=np.float32), out])
     sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
-    sd.wait()
+    if interrupt_check:
+        # 可中断模式: 轮询检查
+        while sd.get_stream() and sd.get_stream().active:
+            if interrupt_check():
+                sd.stop()
+                return True
+            time.sleep(0.05)
+        return False
+    else:
+        sd.wait()
+        return False
 
 
 # ============ 全局组件 ============
@@ -448,20 +460,18 @@ def handle_command(cmd):
             time.sleep(0.2)
             continue
 
-        # ◀ agent 流式输出已结束: 播就绪提示音 + 检查排队指令
+        # ◀ agent 流式输出已结束: 播就绪提示音
         if text_done_event.is_set() and not beep_ready_played:
             beep_ready_played = True
             print("  [◀ 就绪] agent 输出结束，可以输入", flush=True)
-            # 检查是否有排队指令，有则立即中断播报
+            play_beep(BEEP_READY)
+            # 立即检查排队指令
             queued_early = session.pop_queued_command()
             if queued_early:
                 print(f"  [插队] 中断播报，处理排队指令: {queued_early}", flush=True)
                 sd.stop()
-                play_beep(BEEP_READY)
-                # 直接跳出播放循环，在末尾处理排队指令
-                aborted = True  # 跳过等待 response
+                aborted = True
                 break
-            play_beep(BEEP_READY)
 
         # 找最佳音频
         best = _find_best_audio()
@@ -510,16 +520,22 @@ def handle_command(cmd):
 
         tag = f"x{span}" if span > 1 else ""
         print(f"  [播放{tag}] {text[:60]}", flush=True)
-        play_audio(audio, first=first_play)
+
+        # 可中断播放: agent已结束且有排队指令时立即中断
+        def _should_interrupt():
+            return (text_done_event.is_set() and session._queued_command) or stop_event.is_set()
+
+        interrupted = play_audio(audio, first=first_play, interrupt_check=_should_interrupt)
         first_play = False
         play_idx = next_idx
 
-        # 每段播放完检查: agent已结束且有排队指令 → 中断剩余播报
-        if text_done_event.is_set() and session._queued_command:
+        if interrupted:
+            if stop_event.is_set():
+                continue  # 回到循环顶部处理终止逻辑
+            # 排队指令中断
             queued_early = session.pop_queued_command()
             if queued_early:
-                print(f"  [插队] 中断播报，处理排队指令: {queued_early}", flush=True)
-                sd.stop()
+                print(f"  [插队] 播放中中断，处理排队指令: {queued_early}", flush=True)
                 if not beep_ready_played:
                     beep_ready_played = True
                     play_beep(BEEP_READY)

@@ -225,16 +225,20 @@ def speak_async(text, then_state=None):
 # ============ 打断监听 ============
 _STOP_KEYWORDS = ['终止', '中止', '钟止', '中指', '种植']
 
-def start_interrupt_listen(stop_event):
-    """开始监听打断(非阻塞),检测到'终止'时设置stop_event。
-    同时将识别文本传给 session 进行指令排队。"""
+def start_interrupt_listen(stop_event, text_done_event=None):
+    """开始监听(非阻塞)。
+    - '终止' 随时生效，立即设置 stop_event
+    - 其他语音: 只在 text_done_event 已设置后才传给 session 排队
+    """
     def _on_final(text):
         print(f"\n  [监听] {text}", flush=True)
+        # 终止词: 任何时候都能立即终止
         if any(kw in text for kw in _STOP_KEYWORDS) or 'stop' in text.lower():
             stop_event.set()
             return
-        # 非终止词: 传给 session 进行指令排队 (PROCESSING 状态下会缓存指令)
-        session.process_text(text, is_final=True)
+        # 非终止词: 只在 agent 输出结束后才接受指令排队
+        if text_done_event and text_done_event.is_set():
+            session.process_text(text, is_final=True)
 
     asr.set_callbacks(on_final=_on_final)
     if is_duplex:
@@ -342,7 +346,7 @@ def handle_command(cmd):
 
     # 全双工模式:录音一直在跑,直接启动打断监听
     if is_duplex:
-        start_interrupt_listen(stop_event)
+        start_interrupt_listen(stop_event, text_done_event)
         listening = True
 
     def _do_synth(item):
@@ -459,7 +463,7 @@ def handle_command(cmd):
             if all_text_done.is_set():
                 break
             if not listening and not is_duplex:
-                start_interrupt_listen(stop_event)
+                start_interrupt_listen(stop_event, text_done_event)
                 listening = True
             time.sleep(0.2)
             continue
@@ -527,7 +531,7 @@ def handle_command(cmd):
 
         # 可中断播放: agent已结束且有排队指令时立即中断
         def _should_interrupt():
-            return (text_done_event.is_set() and session._queued_command) or stop_event.is_set()
+            return (text_done_event.is_set() and session.has_queued_command) or stop_event.is_set()
 
         interrupted = play_audio(audio, first=first_play, interrupt_check=_should_interrupt)
         first_play = False

@@ -127,8 +127,8 @@ class SessionController:
         # 上下文关联:用户说了"小龙"但没跟指令,等待下一句
         self._pending_command = False
         self._pending_time = 0.0
-        # 排队指令:agent处理中时用户说的新指令
-        self._queued_command: Optional[str] = None
+        # 排队指令队列: agent处理中时用户说的新指令(可多条拼接)
+        self._queued_commands: list = []
         # 连续对话模式
         self.continuous_mode = False
         self._continuous_last_activity = 0.0
@@ -283,7 +283,7 @@ class SessionController:
         """处理中状态:缓存用户新指令,等agent完成后执行"""
         # 检测休眠词
         if _is_sleep_command(text):
-            self._queued_command = None
+            self._queued_commands.clear()
             self._transition(SessionState.SLEEPING)
             print(f"[Session] 处理中收到休眠指令 ({text})")
             if self._on_sleep:
@@ -293,8 +293,8 @@ class SessionController:
         # 尝试提取指令
         command = self._try_extract_command(text)
         if command:
-            self._queued_command = command
-            print(f"[Session] ▇ 排队指令(等待agent完成): {command}")
+            self._queued_commands.append(command)
+            print(f"[Session] ▇ 排队指令({len(self._queued_commands)}): {command}")
             return
 
         # "乐"前缀截断
@@ -303,18 +303,25 @@ class SessionController:
             cmd = text[le_prefix.end():].strip()
             cmd = re.sub(r'[。..\uff01!??]+$', '', cmd).strip()
             if cmd and len(cmd) > 1:
-                self._queued_command = cmd
-                print(f"[Session] ▇ 排队指令(龙前缀,等待agent完成): {cmd}")
+                self._queued_commands.append(cmd)
+                print(f"[Session] ▇ 排队指令({len(self._queued_commands)},龙前缀): {cmd}")
                 return
 
         # 其他文本忽略(环境噪音/agent回复被麦克风捕获)
 
     def pop_queued_command(self) -> Optional[str]:
-        """取出并清除排队的指令"""
+        """取出并清除所有排队指令，拼接返回"""
         with self._lock:
-            cmd = self._queued_command
-            self._queued_command = None
-            return cmd
+            if not self._queued_commands:
+                return None
+            combined = "。".join(self._queued_commands)
+            self._queued_commands.clear()
+            return combined
+
+    @property
+    def has_queued_command(self) -> bool:
+        """是否有排队指令(无锁快速检查)"""
+        return len(self._queued_commands) > 0
 
     def _try_extract_command(self, text: str) -> Optional[str]:
         """从文本中提取指令内容

@@ -49,6 +49,40 @@ def chat_log(role: str, text: str):
     except Exception:
         pass
 
+
+class _TeeWriter:
+    """同时输出到控制台和日志文件"""
+    def __init__(self, original, log_path):
+        self._original = original
+        self._log_path = log_path
+        self._lock = threading.Lock()
+
+    def write(self, text):
+        self._original.write(text)
+        if text.strip():  # 跳过空行
+            with self._lock:
+                try:
+                    from datetime import datetime
+                    ts = datetime.now().strftime('%H:%M:%S')
+                    with open(self._log_path, 'a', encoding='utf-8') as f:
+                        f.write(f'[{ts}] {text}\n' if not text.endswith('\n') else f'[{ts}] {text}')
+                except Exception:
+                    pass
+
+    def flush(self):
+        self._original.flush()
+
+    @property
+    def encoding(self):
+        return getattr(self._original, 'encoding', 'utf-8')
+
+    def isatty(self):
+        return False
+
+# 将stdout和stderr同时输出到日志文件
+sys.stdout = _TeeWriter(sys.stdout, _chat_log_path)
+sys.stderr = _TeeWriter(sys.stderr, _chat_log_path)
+
 import sounddevice as sd
 from audio_io import AudioRecorder, auto_detect_devices, check_duplex_support, fast_resample
 from asr_engine import ASREngine

@@ -82,10 +82,12 @@ def find_bluetooth_devices(keyword: str = "漫步者") -> tuple[Optional[int], O
     return input_id, output_id, info
 
 
-def auto_detect_devices(prefer_local_input: bool = False, prefer_local: bool = False) -> dict:
+def auto_detect_devices(prefer_local_input: bool = False, prefer_local: bool = False,
+                        hfp_duplex: bool = False) -> dict:
     """自动检测最佳音频输入/输出设备
 
     策略（按优先级）：
+      0. HFP全双工：输入输出都走 HFP（音质低但支持同时收发）
       1. 蓝牙一体设备：同一蓝牙设备的 HFP 输入 + A2DP Stereo 输出
       2. 蓝牙分体：任意蓝牙 HFP 输入 + 任意蓝牙 A2DP 输出
       3. 蓝牙+本地混合：蓝牙 HFP 输入 + 本地扬声器输出（或反之）
@@ -97,7 +99,7 @@ def auto_detect_devices(prefer_local_input: bool = False, prefer_local: bool = F
       input_id, input_sr, input_name, input_api,
       output_id, output_sr, output_name, output_api,
       bt_name (蓝牙设备名, 无蓝牙时为 None),
-      mode ('bt_unified' | 'bt_split' | 'bt_mixed' | 'local')
+      mode ('hfp_duplex' | 'bt_unified' | 'bt_split' | 'bt_mixed' | 'local')
     """
     devices = sd.query_devices()
     api_priority = {'Windows DirectSound': 0, 'DirectSound': 0,
@@ -105,6 +107,7 @@ def auto_detect_devices(prefer_local_input: bool = False, prefer_local: bool = F
 
     # ---- 扫描所有设备，分类 ----
     bt_hfp_inputs = []   # (idx, dev, api_name, bt_name, priority)
+    bt_hfp_outputs = []  # (idx, dev, api_name, bt_name, priority)
     bt_stereo_outputs = []  # (idx, dev, api_name, bt_name, priority)
     local_inputs = []    # (idx, dev, api_name, priority)
     local_outputs = []   # (idx, dev, api_name, priority)
@@ -135,7 +138,9 @@ def auto_detect_devices(prefer_local_input: bool = False, prefer_local: bool = F
 
         if is_bt_hfp and d['max_input_channels'] > 0:
             bt_hfp_inputs.append((i, d, hostapi, bt_name, pri))
-        elif is_bt_stereo and d['max_output_channels'] > 0:
+        if is_bt_hfp and d['max_output_channels'] > 0:
+            bt_hfp_outputs.append((i, d, hostapi, bt_name, pri))
+        if is_bt_stereo and d['max_output_channels'] > 0:
             bt_stereo_outputs.append((i, d, hostapi, bt_name, pri))
         elif not is_bt:
             if d['max_input_channels'] > 0:
@@ -153,6 +158,7 @@ def auto_detect_devices(prefer_local_input: bool = False, prefer_local: bool = F
 
     # 按 API 优先级排序
     bt_hfp_inputs.sort(key=lambda x: x[4])
+    bt_hfp_outputs.sort(key=lambda x: x[4])
     bt_stereo_outputs.sort(key=lambda x: x[4])
     local_inputs.sort(key=lambda x: (x[4], x[3]))   # 先按设备类型优先级，再按API优先级
     local_outputs.sort(key=lambda x: (x[4], x[3]))
@@ -160,6 +166,7 @@ def auto_detect_devices(prefer_local_input: bool = False, prefer_local: bool = F
     # prefer_local: 跳过蓝牙，直接用本地设备
     if prefer_local:
         bt_hfp_inputs.clear()
+        bt_hfp_outputs.clear()
         bt_stereo_outputs.clear()
 
     result = {}
@@ -175,6 +182,32 @@ def auto_detect_devices(prefer_local_input: bool = False, prefer_local: bool = F
         result['output_sr'] = int(dev['default_samplerate'])
         result['output_name'] = dev['name']
         result['output_api'] = api
+
+    # ---- 策略0: HFP全双工（输入输出都走HFP，音质低但真全双工）----
+    if hfp_duplex and bt_hfp_inputs and bt_hfp_outputs:
+        # 优先找同名设备
+        for hi, hd, hapi, hbt, _ in bt_hfp_inputs:
+            for oi, od, oapi, obt, _ in bt_hfp_outputs:
+                if hbt and obt and hbt == obt:
+                    _set_input(hi, hd, hapi)
+                    _set_output(oi, od, oapi)
+                    result['bt_name'] = hbt
+                    result['mode'] = 'hfp_duplex'
+                    print(f"[Audio] HFP全双工模式: {hbt} (输入输出都走HFP，音质=电话级)")
+                    print(f"  输入: #{hi} [{hapi}] {hd['name']} ({result['input_sr']}Hz)")
+                    print(f"  输出: #{oi} [{oapi}] {od['name']} ({result['output_sr']}Hz)")
+                    return result
+        # 没有同名的，取第一个
+        hi, hd, hapi, hbt, _ = bt_hfp_inputs[0]
+        oi, od, oapi, obt, _ = bt_hfp_outputs[0]
+        _set_input(hi, hd, hapi)
+        _set_output(oi, od, oapi)
+        result['bt_name'] = hbt or obt
+        result['mode'] = 'hfp_duplex'
+        print(f"[Audio] HFP全双工模式: {result['bt_name']} (输入输出都走HFP，音质=电话级)")
+        print(f"  输入: #{hi} [{hapi}] {hd['name']} ({result['input_sr']}Hz)")
+        print(f"  输出: #{oi} [{oapi}] {od['name']} ({result['output_sr']}Hz)")
+        return result
 
     # ---- 分离模式：本地麦克风输入 + 蓝牙A2DP输出（同时工作）----
     if prefer_local_input and bt_stereo_outputs and local_inputs:

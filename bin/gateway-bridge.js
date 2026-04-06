@@ -47,7 +47,8 @@ let lastDeltaAt = 0;           // 最后一次收到 text_delta 的时间
 let promptSentAt = 0;          // prompt 发送时间
 let stallCheckTimer = null;    // 停滞检测定时器
 const STALL_CHECK_INTERVAL = 15000;  // 每15秒检查一次
-const STALL_TIMEOUT = 600000;        // 10分钟无任何事件则强制结束
+const STALL_TIMEOUT = 120000;        // 2分钟无任何text/tool事件则强制结束
+const FIRST_RESPONSE_TIMEOUT = 60000; // prompt发出后60秒内必须收到第一个text_delta
 
 // --- 输出 (Pi RPC 兼容事件) ---
 function emit(event) {
@@ -250,6 +251,14 @@ function emitAgentEnd() {
   agentEndEmitted = true;
   promptActive = false;
   stopStallCheck();
+  // 强制发 abort 确保 gateway 释放 session lane
+  if (connected && ws) {
+    ws.send(JSON.stringify({
+      type: "req", id: "__cleanup_abort",
+      method: "chat.abort",
+      params: { sessionKey: SESSION_KEY },
+    }));
+  }
   // 清理心跳/干扰文本
   currentResponse = currentResponse.replace(/HEARTBEAT_?O?K?/g, "").replace(/\bNO_/g, "").trim();
   if (currentResponse) {
@@ -310,9 +319,18 @@ function startStallCheck() {
   stopStallCheck();
   stallCheckTimer = setInterval(() => {
     if (!promptActive || agentEndEmitted) { stopStallCheck(); return; }
-    const idleMs = Date.now() - lastDeltaAt;
+    const now = Date.now();
+    const idleMs = now - lastDeltaAt;
+    const sincePrompt = now - promptSentAt;
+    // 首次响应超时：prompt发出后N秒内没收到任何text_delta
+    if (!currentResponse && sincePrompt > FIRST_RESPONSE_TIMEOUT) {
+      process.stderr.write(`[bridge] first response timeout: ${Math.round(sincePrompt/1000)}s since prompt, no text received\n`);
+      currentResponse = `抱歉，处理超时了，请再说一次`;
+      emitAgentEnd();
+      return;
+    }
+    // 停滞超时：收到过内容但之后N秒无任何事件
     if (idleMs < STALL_TIMEOUT) return;
-    // 超过 STALL_TIMEOUT 无任何事件（包括工具调用），强制结束
     process.stderr.write(`[bridge] stall timeout: ${Math.round(idleMs/1000)}s idle, forcing agent_end\n`);
     if (!currentResponse) currentResponse = `抱歉，处理超时了，请再说一次`;
     emitAgentEnd();

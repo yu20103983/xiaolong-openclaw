@@ -39,7 +39,7 @@ _CONTINUOUS_END_PATTERNS = [
 # ============ 模糊匹配工具 ============
 
 # "小龙" 的常见 ASR 误识别变体
-_XIAO_CHARS = r"[小肖晓消笑筱享向想响销削校效啸歇]"
+_XIAO_CHARS = r"[小肖晓消笑筱享向想响销削校效啸歇陆路鹿绿]"
 _LONG_CHARS = r"[龙隆笼聋拢弄农浓侬绒容融荣龍东鹿]"
 # 匹配一个 "小龙" (含变体),中间允许0-1个杂字
 _ONE_XL = _XIAO_CHARS + r".{0,1}" + _LONG_CHARS
@@ -64,8 +64,8 @@ _SLEEP_EXTRAS = [
     r'拜拜', r'打扰了',
 ]
 
-# 等待后续指令的超时秒数(用户说"小龙"后的等待窗口)
-_PENDING_TIMEOUT = 5.0
+# 等待后续指令的超时秒数(用户说"小龙"后的等待窗口, 0=不进行关联)
+_PENDING_TIMEOUT = 0
 
 
 def _has_wake_word(text: str) -> bool:

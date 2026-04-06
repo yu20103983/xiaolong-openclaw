@@ -123,7 +123,8 @@ def _init_audio_devices():
         print(f"[Audio] 使用配置: 输入=#{HFP_IN}({HFP_IN_SR}Hz) 输出=#{A2DP_ID}({A2DP_SR}Hz)")
         return
     prefer = getattr(__import__('config'), 'PREFER_LOCAL', False)
-    det = auto_detect_devices(prefer_local=prefer)
+    hfp_dup = getattr(__import__('config'), 'HFP_DUPLEX', False)
+    det = auto_detect_devices(prefer_local=prefer, hfp_duplex=hfp_dup)
     _init_audio_devices._det = det  # 保存检测结果供双工检测用
     if HFP_IN is None:
         HFP_IN = det['input_id']
@@ -145,11 +146,17 @@ def _check_duplex():
         return
 
     print("[Audio] 正在检测设备双工能力...")
-    # 蓝牙一体设备 (HFP输入+A2DP输出) 在 Windows 下不支持全双工
-    if hasattr(_init_audio_devices, '_det') and _init_audio_devices._det.get('mode') == 'bt_unified':
-        is_duplex = False
-        print(f"[Audio] 检测结果: 半双工(交替模式) - 蓝牙一体设备 HFP/A2DP 不可同时工作")
-        return
+    # HFP全双工模式 或 蓝牙一体设备: 直接判定双工能力
+    if hasattr(_init_audio_devices, '_det'):
+        det_mode = _init_audio_devices._det.get('mode')
+        if det_mode == 'hfp_duplex':
+            is_duplex = True
+            print(f"[Audio] 检测结果: 全双工(边说边听) - HFP全双工模式")
+            return
+        if det_mode == 'bt_unified':
+            is_duplex = False
+            print(f"[Audio] 检测结果: 半双工(交替模式) - 蓝牙一体设备 HFP/A2DP 不可同时工作")
+            return
     result = check_duplex_support(HFP_IN, HFP_IN_SR, A2DP_ID, A2DP_SR, test_duration=1.0)
     is_duplex = result["duplex"]
     mode_str = "全双工(边说边听)" if is_duplex else "半双工(交替模式)"
@@ -570,7 +577,7 @@ def handle_command(cmd):
     play_idx = 0
     first_play = True  # 首次播放需要BT切换
     wait_start = time.time()  # agent 超时兆底计时器
-    AGENT_TIMEOUT = 3 * 3600  # agent 无响应超时秒数（3小时）
+    AGENT_TIMEOUT = 180  # agent 无新内容超时秒数（3分钟，兼底保护）
 
     def _find_best_audio():
         """从 play_idx 开始,找最长的已就绪合并音频。
@@ -953,6 +960,27 @@ def main():
         while running:
             session.check_auto_sleep()
             session.check_continuous_timeout()
+            # 半双工模式：检测外部播放器(mpv/PotPlayer)，运行时停止录音
+            if not is_duplex:
+                import subprocess
+                try:
+                    r = subprocess.run('tasklist /FI "IMAGENAME eq mpv.exe" /NH', capture_output=True, text=True, timeout=3)
+                    player_running = 'mpv.exe' in r.stdout
+                except:
+                    player_running = False
+                if player_running:
+                    if recorder._running:
+                        print("[Audio] 检测到mpv播放中，停止录音释放A2DP", flush=True)
+                        recorder.stop()
+                    _watchdog["last_audio"] = time.time()  # 重置看门狗
+                    time.sleep(3)
+                    continue
+                else:
+                    if not recorder._running and not processing:
+                        print("[Audio] mpv已结束，恢复录音", flush=True)
+                        time.sleep(1)  # 等待蓝牙切回HFP
+                        recorder.start(callback=feed_audio)
+                        _watchdog["last_audio"] = time.time()
             # 录音看门狗：检测音频流是否停止（外部播放器占用设备等）
             if (not processing
                     and session.state != SessionState.SLEEPING

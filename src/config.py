@@ -10,6 +10,7 @@ HFP_IN = None             # 输入设备 ID (None=自动检测)
 HFP_IN_SR = None          # 输入采样率 (None=自动检测)
 SPLIT_IO = False          # 分离模式：本地麦克风输入 + 蓝牙A2DP输出
 DUPLEX_MODE = None        # 全双工模式: True/False/None(自动检测)
+HFP_DUPLEX = True         # HFP全双工模式: 输入输出都走HFP(音质降低但支持边说边听)
 PREFER_LOCAL = False      # 优先本地设备（跳过蓝牙检测）
 
 # ============ TTS ============

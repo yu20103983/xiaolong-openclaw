@@ -39,7 +39,7 @@ _CONTINUOUS_END_PATTERNS = [
 # ============ 模糊匹配工具 ============
 
 # "小龙" 的常见 ASR 误识别变体
-_XIAO_CHARS = r"[小肖晓消笑筱享向想响]"
+_XIAO_CHARS = r"[小肖晓消笑筱享向想响销削校效啸歇]"
 _LONG_CHARS = r"[龙隆笼聋拢弄农浓侬绒容融荣龍]"
 # 匹配一个 "小龙" (含变体),中间允许0-1个杂字
 _ONE_XL = _XIAO_CHARS + r".{0,1}" + _LONG_CHARS
@@ -49,12 +49,20 @@ _TWO_XL = _ONE_XL + r".{0,3}" + _ONE_XL
 _ANY_LONG_TWICE = r"." + _LONG_CHARS + r".{0,3}." + _LONG_CHARS
 
 # "退下" 的常见变体
-_TUI_CHARS = r"[退对腿推]"
-_XIA_CHARS = r"[下夏]"
+_TUI_CHARS = r"[退对腿推堆吹]"
+_XIA_CHARS = r"[下夏吓侠]"
 _TUIXIA = _TUI_CHARS + r".{0,1}" + _XIA_CHARS
 
 # "再见" 的变体
 _ZAIJIAN = r"再.{0,1}见"
+
+# "不说了" "不聊了" "我走了" 等其他休眠表达
+_SLEEP_EXTRAS = [
+    r'不说了', r'不聊了', r'不用了', r'我走了',
+    r'先这样', r'就这样', r'没事了',
+    r'去休息', r'去睡觉', r'下次再说',
+    r'拜拜', r'打扰了',
+]
 
 # 等待后续指令的超时秒数(用户说"小龙"后的等待窗口)
 _PENDING_TIMEOUT = 5.0
@@ -99,22 +107,29 @@ def _strip_wake_prefix(text: str) -> str:
 
 
 def _is_sleep_command(text: str) -> bool:
-    """检测是否是休眠指令: 小龙(小龙)退下/再见"""
+    """检测是否是休眠指令: 小龙(小龙)退下/再见/不聊了..."""
     if not _has_wake_word(text):
         return False
     if re.search(_TUIXIA, text):
         return True
     if re.search(_ZAIJIAN, text):
         return True
+    for pat in _SLEEP_EXTRAS:
+        if re.search(pat, text):
+            return True
     return False
 
 
+# 用于 _extract_after_long 的严格字符集（只匹配真正接近"龙"的字，避免误触发）
+_LONG_STRICT = r"[龙隆笼聋拢龍]"
+
+
 def _extract_after_long(text: str) -> Optional[str]:
-    """从文本中任意位置找"龙"(含近音),提取其后的内容作为指令。
+    """从文本中任意位置找"龙"(严格近音),提取其后的内容作为指令。
     例如: '什么龙帮我查天气' → '帮我查天气'
           '龙,查一下' → '查一下'
     """
-    m = re.search(_LONG_CHARS + r'[,，::。.、\s]*', text)
+    m = re.search(_LONG_STRICT + r'[,，::。.、\s]*', text)
     if not m:
         return None
     cmd = text[m.end():].strip()
@@ -254,8 +269,8 @@ class SessionController:
                 self._on_command(long_cmd)
             return
         # 只有"龙"没有后续内容 → 视为截断的唤醒词
-        if re.search(_LONG_CHARS, text):
-            cleaned = re.sub(_LONG_CHARS, '', text)
+        if re.search(_LONG_STRICT, text):
+            cleaned = re.sub(_LONG_STRICT, '', text)
             cleaned = re.sub(r'[,,::。.、\s!!??]', '', cleaned)
             if len(cleaned) == 0:
                 self._pending_command = True

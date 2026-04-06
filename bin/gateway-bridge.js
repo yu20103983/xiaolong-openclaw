@@ -41,6 +41,13 @@ let currentResponse = "";
 let idempotencyCounter = 0;
 let subscribedSession = null;
 let systemPrompt = null;  // steer 消息作为 system prompt
+let promptActive = false;      // 是否有活跃的 prompt
+let agentEndEmitted = false;   // 当前 prompt 是否已发送 agent_end
+let lastDeltaAt = 0;           // 最后一次收到 text_delta 的时间
+let promptSentAt = 0;          // prompt 发送时间
+let stallCheckTimer = null;    // 停滞检测定时器
+const STALL_CHECK_INTERVAL = 15000;  // 每15秒检查一次
+const STALL_TIMEOUT = 600000;        // 10分钟无任何事件则强制结束
 
 // --- 输出 (Pi RPC 兼容事件) ---
 function emit(event) {
@@ -127,7 +134,17 @@ function handleGatewayMessage(msg) {
     if (msg.ok) {
       emit({ type: "agent_start" });
       emit({ type: "turn_start" });
+    } else {
+      // prompt 发送失败，立即结束
+      process.stderr.write(`[bridge] prompt rejected: ${JSON.stringify(msg.error)}\n`);
+      if (!currentResponse) currentResponse = `抱歉，指令发送失败`;
+      emitAgentEnd();
     }
+    return;
+  }
+
+  // 4b. stall_check 响应（已废弃，chat.status API 不存在，直接忽略）
+  if (msg.type === "res" && msg.id === "__stall_check") {
     return;
   }
 
@@ -144,19 +161,23 @@ function handleStreamEvent(msg) {
 
   // Agent 流式文本 (event: "agent", stream: "assistant")
   if (evt === "agent" && p.stream === "assistant" && p.sessionKey === SESSION_KEY) {
+    // 没有活跃 prompt 或已结束 → 丢弃 (防止 bootstrap/残留事件)
+    if (!promptActive || agentEndEmitted) return;
     const delta = p.data?.delta || "";
-    if (delta && delta !== "HEARTBEAT_OK") {
-      currentResponse += delta;
-      emit({
-        type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta },
-      });
-    }
+    // 过滤心跳相关文本 (可能拆成多个 delta)
+    if (!delta || /^\s*HEARTBEAT_?O?K?\s*$/.test(delta) || /^\s*NO_?\s*$/.test(delta)) return;
+    currentResponse += delta;
+    lastDeltaAt = Date.now();
+    emit({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta },
+    });
     return;
   }
 
   // Agent 工具调用 (event: "agent", stream: "tool")
   if (evt === "agent" && p.stream === "tool" && p.sessionKey === SESSION_KEY) {
+    lastDeltaAt = Date.now();  // 工具事件也重置停滞计时
     const phase = p.data?.phase || "";
     if (phase === "start") {
       emit({ type: "tool_execution_start", toolName: p.data?.name || "" });
@@ -164,49 +185,34 @@ function handleStreamEvent(msg) {
     return;
   }
 
-  // Agent 生命周期结束 (event: "agent", stream: "lifecycle", phase: "end")
+  // Agent 生命周期 (event: "agent", stream: "lifecycle")
   if (evt === "agent" && p.stream === "lifecycle" && p.sessionKey === SESSION_KEY) {
-    if (p.data?.phase === "end") {
-      // 清理 HEARTBEAT_OK 等干扰文本
-      currentResponse = currentResponse.replace(/HEARTBEAT_OK/g, "").trim();
-      if (currentResponse) {
-        emit({
-          type: "agent_end",
-          messages: [{ role: "assistant", content: [{ type: "text", text: currentResponse }] }],
-        });
-        currentResponse = "";
+    const phase = p.data?.phase || "";
+    if (phase === "end" || phase === "error" || phase === "timeout") {
+      if (phase !== "end") {
+        process.stderr.write(`[bridge] Agent lifecycle ${phase}\n`);
+        if (!currentResponse) {
+          currentResponse = `抱歉，处理超时了，请再说一次`;
+        }
       }
+      emitAgentEnd();
     }
     return;
   }
 
-  // chat final 作为备选结束信号
+  // chat 状态事件（final / error / aborted）
   if (evt === "chat" && p.sessionKey === SESSION_KEY) {
-    if (p.state === "error") {
-      const errMsg = p.errorMessage || "Unknown agent error";
-      process.stderr.write(`[bridge] Agent error: ${errMsg}\n`);
-      // 将错误作为文本回复给用户
-      const hint = `抱歉，出了点问题：${errMsg}`;
-      emit({
-        type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: hint },
-      });
-      currentResponse = hint;
-      emit({
-        type: "agent_end",
-        messages: [{ role: "assistant", content: [{ type: "text", text: hint }] }],
-      });
-      currentResponse = "";
+    if (p.state === "error" || p.state === "aborted") {
+      const errMsg = p.errorMessage || p.state;
+      process.stderr.write(`[bridge] Chat ${p.state}: ${errMsg}\n`);
+      if (!currentResponse) {
+        currentResponse = `抱歉，出了点问题：${errMsg}`;
+      }
+      emitAgentEnd();
       return;
     }
     if (p.state === "final") {
-      if (currentResponse) {
-        emit({
-          type: "agent_end",
-          messages: [{ role: "assistant", content: [{ type: "text", text: currentResponse }] }],
-        });
-        currentResponse = "";
-      }
+      emitAgentEnd();
     }
   }
 }
@@ -238,6 +244,23 @@ rl.on("close", () => {
   process.exit(0);
 });
 
+// 统一的 agent_end 发送（防重复）
+function emitAgentEnd() {
+  if (agentEndEmitted) return;  // 已发过，不重复
+  agentEndEmitted = true;
+  promptActive = false;
+  stopStallCheck();
+  // 清理心跳/干扰文本
+  currentResponse = currentResponse.replace(/HEARTBEAT_?O?K?/g, "").replace(/\bNO_/g, "").trim();
+  if (currentResponse) {
+    emit({
+      type: "agent_end",
+      messages: [{ role: "assistant", content: [{ type: "text", text: currentResponse }] }],
+    });
+  }
+  currentResponse = "";
+}
+
 function handlePrompt(message) {
   if (!connected || !ws) {
     emit({ type: "response", command: "prompt", success: false, error: "Not connected to Gateway" });
@@ -245,6 +268,11 @@ function handlePrompt(message) {
   }
 
   currentResponse = "";
+  promptActive = true;
+  agentEndEmitted = false;
+  lastDeltaAt = Date.now();
+  promptSentAt = Date.now();
+  startStallCheck();
   const idKey = `prompt_${++idempotencyCounter}_${Date.now()}`;
 
   // 将 system prompt 拼接到第一次用户消息前，后续只发用户消息
@@ -275,6 +303,24 @@ function handleAbort() {
     method: "chat.abort",
     params: { sessionKey: SESSION_KEY },
   }));
+}
+
+// --- 停滞检测：定期查询 chat 状态，防止 gateway 超时但未广播结束事件 ---
+function startStallCheck() {
+  stopStallCheck();
+  stallCheckTimer = setInterval(() => {
+    if (!promptActive || agentEndEmitted) { stopStallCheck(); return; }
+    const idleMs = Date.now() - lastDeltaAt;
+    if (idleMs < STALL_TIMEOUT) return;
+    // 超过 STALL_TIMEOUT 无任何事件（包括工具调用），强制结束
+    process.stderr.write(`[bridge] stall timeout: ${Math.round(idleMs/1000)}s idle, forcing agent_end\n`);
+    if (!currentResponse) currentResponse = `抱歉，处理超时了，请再说一次`;
+    emitAgentEnd();
+  }, STALL_CHECK_INTERVAL);
+}
+
+function stopStallCheck() {
+  if (stallCheckTimer) { clearInterval(stallCheckTimer); stallCheckTimer = null; }
 }
 
 // --- 启动 ---

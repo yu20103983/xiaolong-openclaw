@@ -43,6 +43,7 @@ class AgentClient:
         self._current_response = ""
         self._response_event = threading.Event()
         self._connected_event = threading.Event()  # Bridge连接就绪信号
+        self._prompt_active = False  # 是否有活跃的 prompt（阻止过期事件）
         self._lock = threading.Lock()
         self._steer_message: Optional[str] = None
 
@@ -166,6 +167,8 @@ class AgentClient:
         event_type = event.get("type", "")
 
         if event_type == "message_update":
+            if not self._prompt_active:
+                return  # 无活跃 prompt，丢弃残留事件
             ame = event.get("assistantMessageEvent", {})
             if ame.get("type") == "text_delta":
                 delta = ame.get("delta", "")
@@ -178,6 +181,8 @@ class AgentClient:
             self._connected_event.set()
 
         elif event_type == "tool_execution_start":
+            if not self._prompt_active:
+                return
             if not self._current_response.strip() and self._on_text_delta:
                 tool_name = event.get("toolName", "")
                 hint = "好的，我来处理一下"
@@ -185,6 +190,9 @@ class AgentClient:
                 self._on_text_delta(hint)
 
         elif event_type == "agent_end":
+            if not self._prompt_active:
+                return  # 已结束，不重复触发
+            self._prompt_active = False  # 立即标记结束，阻止后续事件
             response = self._current_response.strip()
             # 过滤 gateway 心跳响应
             if response and response.replace('HEARTBEAT_OK', '').strip() == '':
@@ -224,10 +232,12 @@ class AgentClient:
         """异步发送提示（不等待响应）"""
         self._current_response = ""
         self._response_event.clear()
+        self._prompt_active = True
         self._send({"type": "prompt", "message": message})
 
     def abort(self):
         """中止当前操作"""
+        self._prompt_active = False
         self._send({"type": "abort"})
 
     def _health_check(self):

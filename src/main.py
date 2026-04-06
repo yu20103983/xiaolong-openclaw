@@ -302,7 +302,12 @@ def play_beep(beep_audio):
     sd.wait()
 
 
+# 录音看门狗：跟踪最后一次收到音频的时间
+_watchdog = {"last_audio": time.time()}
+RECORDER_WATCHDOG_TIMEOUT = 10  # 超过10秒没收到音频则重启录音
+
 def feed_audio(data):
+    _watchdog["last_audio"] = time.time()
     asr.feed_audio(data)
 
 
@@ -338,6 +343,7 @@ _STOP_KEYWORDS = [
     # “终止” 及其 ASR 误识别变体
     '终止', '中止', '钟止', '中指', '种植',
     '总旨', '综指', '粽子', '种子', '众子',
+    '宗止',
     '停止', '停下', '停一停',
     '中断',
     'stop',
@@ -433,6 +439,7 @@ def handle_command(cmd):
             buf["text"] = buf["text"][pos:]
             if s and len(s) > 1:
                 sentence_queue.put((s, is_sentence_end))
+                wait_start = time.time()  # 收到新文本，重置超时
 
     def on_complete(full):
         print(flush=True)
@@ -562,6 +569,8 @@ def handle_command(cmd):
     # ========== 主线程:FIFO顺序播放 ==========
     play_idx = 0
     first_play = True  # 首次播放需要BT切换
+    wait_start = time.time()  # agent 超时兆底计时器
+    AGENT_TIMEOUT = 3 * 3600  # agent 无响应超时秒数（3小时）
 
     def _find_best_audio():
         """从 play_idx 开始,找最长的已就绪合并音频。
@@ -618,6 +627,13 @@ def handle_command(cmd):
 
         if not has_more:
             if all_text_done.is_set():
+                break
+            # 兆底超时：agent 无响应太久（gateway 超时但 bridge 没收到结束事件）
+            if time.time() - wait_start > AGENT_TIMEOUT and not buf["done"]:
+                print(f"\n[Timeout] agent {AGENT_TIMEOUT}s 无响应，强制结束", flush=True)
+                agent.abort()
+                aborted = True
+                play_simple("抱歉，处理超时了")
                 break
             if not listening and not is_duplex:
                 start_interrupt_listen(stop_event, text_done_event)
@@ -937,6 +953,19 @@ def main():
         while running:
             session.check_auto_sleep()
             session.check_continuous_timeout()
+            # 录音看门狗：检测音频流是否停止（外部播放器占用设备等）
+            if (not processing
+                    and session.state != SessionState.SLEEPING
+                    and time.time() - _watchdog["last_audio"] > RECORDER_WATCHDOG_TIMEOUT):
+                print(f"[Watchdog] 录音流无数据超过{RECORDER_WATCHDOG_TIMEOUT}s，重启录音设备", flush=True)
+                try:
+                    recorder.stop()
+                    time.sleep(0.5)
+                    recorder.start(callback=feed_audio)
+                    _watchdog["last_audio"] = time.time()
+                    print("[Watchdog] 录音设备已重启", flush=True)
+                except Exception as e:
+                    print(f"[Watchdog] 重启录音失败: {e}", flush=True)
             time.sleep(3)
     threading.Thread(target=auto_sleep, daemon=True).start()
 

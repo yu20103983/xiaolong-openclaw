@@ -244,6 +244,9 @@ class AgentClient:
                     print(f"[Agent] 自动重启 ({self._restart_count}/{self.max_restarts})...")
                     try:
                         self._start_process()
+                        # 重启后恢复 system prompt
+                        if self._steer_message:
+                            self._send({"type": "steer", "message": self._steer_message})
                         self._restart_count = 0
                         print("[Agent] 重启成功")
                     except Exception as e:

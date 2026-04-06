@@ -172,7 +172,8 @@ def play_audio(audio_float32, first=False, interrupt_check=None):
 
 # ============ 全局组件 ============
 asr = ASREngine()
-tts = TTSEngine(engine="edge", voice=TTS_VOICE, rate=TTS_RATE)
+tts = TTSEngine(engine=TTS_ENGINE, voice=TTS_VOICE, rate=TTS_RATE,
+               local_model=TTS_LOCAL_MODEL)
 agent = AgentClient(working_dir=PI_WORKING_DIR, provider=PI_PROVIDER, model=PI_MODEL)
 session = SessionController()
 recorder = AudioRecorder(device_id=HFP_IN, sample_rate=HFP_IN_SR, target_sr=16000,
@@ -426,7 +427,7 @@ def handle_command(cmd):
         """收集线程:取短句 → 启动单句合成 + 合并合成"""
         while not stop_event.is_set():
             try:
-                text, is_sent_end = sentence_queue.get(timeout=0.3)
+                text, is_sent_end = sentence_queue.get(timeout=0.1)
             except queue.Empty:
                 if buf["done"] and sentence_queue.empty():
                     break
@@ -709,7 +710,8 @@ def on_command(cmd):
             flush_input_buffer()
         return
     input_buffer.append(cmd)
-    print(f"  [积累] {cmd} (说'好了'或等{INPUT_SILENCE_TIMEOUT}s静音)", flush=True)
+    timeout = _estimate_input_timeout("。".join(input_buffer))
+    print(f"  [积累] {cmd} (说'好了'或等{timeout}s静音)", flush=True)
     reset_input_timer()
 
     # 保持 ACTIVE 状态以继续接收后续输入(上下文拼接)

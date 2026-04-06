@@ -226,11 +226,15 @@ def speak_async(text, then_state=None):
 _STOP_KEYWORDS = ['终止', '中止', '钟止', '中指', '种植']
 
 def start_interrupt_listen(stop_event):
-    """开始监听打断(非阻塞),检测到'终止'时设置stop_event"""
+    """开始监听打断(非阻塞),检测到'终止'时设置stop_event。
+    同时将识别文本传给 session 进行指令排队。"""
     def _on_final(text):
         print(f"\n  [监听] {text}", flush=True)
         if any(kw in text for kw in _STOP_KEYWORDS) or 'stop' in text.lower():
             stop_event.set()
+            return
+        # 非终止词: 传给 session 进行指令排队 (PROCESSING 状态下会缓存指令)
+        session.process_text(text, is_final=True)
 
     asr.set_callbacks(on_final=_on_final)
     if is_duplex:

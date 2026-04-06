@@ -30,7 +30,7 @@ if sys.platform == 'win32':
 
 # ============ 日志系统 ============
 def _init_logs():
-    """初始化两个日志：控制台日志 + 对话日志"""
+    """初始化两个日志：控制台日志(带级别) + 对话日志"""
     from datetime import datetime
     log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
     os.makedirs(log_dir, exist_ok=True)
@@ -53,8 +53,24 @@ def chat_log(role: str, text: str):
         pass
 
 
+# 根据内容自动判断日志级别
+_LEVEL_RULES = [
+    ('ERROR',   ['失败', 'error', 'Error', 'FAIL', 'fail', '异常', 'exception', 'traceback', 'Traceback']),
+    ('WARNING', ['警告', 'warning', 'Warning', '超时', 'timeout', '重试', 'retry', '回退']),
+    ('INFO',    ['用户', '小龙', 'Session', '指令', '唤醒', '休眠', '排队', '连续对话',
+                 'TTS', 'ASR', 'Audio', 'Agent', 'Main', 'Bridge']),
+]
+
+def _detect_level(text: str) -> str:
+    for level, keywords in _LEVEL_RULES:
+        for kw in keywords:
+            if kw in text:
+                return level
+    return 'DEBUG'
+
+
 class _TeeWriter:
-    """同时输出到控制台和控制台日志文件"""
+    """同时输出到控制台和控制台日志文件（带日志级别）"""
     def __init__(self, original, log_path):
         self._original = original
         self._log_path = log_path
@@ -67,8 +83,10 @@ class _TeeWriter:
                 try:
                     from datetime import datetime
                     ts = datetime.now().strftime('%H:%M:%S')
+                    level = _detect_level(text)
                     with open(self._log_path, 'a', encoding='utf-8') as f:
-                        f.write(f'[{ts}] {text}\n' if not text.endswith('\n') else f'[{ts}] {text}')
+                        line = text.rstrip('\n')
+                        f.write(f'[{ts}] [{level}] {line}\n')
                 except Exception:
                     pass
 
@@ -82,7 +100,7 @@ class _TeeWriter:
     def isatty(self):
         return False
 
-# stdout/stderr → 控制台日志（所有print内容）
+# stdout/stderr → 控制台日志（带级别）
 sys.stdout = _TeeWriter(sys.stdout, _console_log_path)
 sys.stderr = _TeeWriter(sys.stderr, _console_log_path)
 

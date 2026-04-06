@@ -659,7 +659,8 @@ def handle_command(cmd):
     queued = queued_early if queued_early else session.pop_queued_command()
     if queued:
         print(f"\n[排队指令] 执行: {queued}", flush=True)
-        on_command(queued)
+        chat_log('用户', f'(排队) {queued}')
+        handle_command(queued)
         return
 
     print(flush=True)

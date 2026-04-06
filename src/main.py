@@ -242,7 +242,17 @@ def speak_async(text, then_state=None):
 
 
 # ============ 打断监听 ============
-_STOP_KEYWORDS = ['终止', '中止', '钟止', '中指', '种植']
+_STOP_KEYWORDS = [
+    # “终止” 及其 ASR 误识别变体
+    '终止', '中止', '钟止', '中指', '种植',
+    '停止', '停下', '停一停',
+    # 单字快速匹配
+    '终止', '中断',
+    # 英文
+    'stop',
+]
+# 单字匹配: 只要识别结果就是这一个字
+_STOP_SINGLE_CHARS = {'停', '止', '终'}
 
 def start_interrupt_listen(stop_event, text_done_event=None):
     """开始监听(非阻塞)。
@@ -252,7 +262,10 @@ def start_interrupt_listen(stop_event, text_done_event=None):
     def _on_final(text):
         print(f"\n  [监听] {text}", flush=True)
         # 终止词: 任何时候都能立即终止
-        if any(kw in text for kw in _STOP_KEYWORDS) or 'stop' in text.lower():
+        text_clean = re.sub(r'[。，！？、\s,.!?]', '', text)
+        if (any(kw in text for kw in _STOP_KEYWORDS)
+                or text_clean in _STOP_SINGLE_CHARS
+                or 'stop' in text.lower()):
             stop_event.set()
             return
         # 非终止词: 只在 agent 输出结束后才接受指令排队

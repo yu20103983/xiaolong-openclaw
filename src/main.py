@@ -28,19 +28,22 @@ if sys.platform == 'win32':
     _disable_quickedit()
 
 
-# ============ 对话日志记录 ============
-def _init_chat_log():
-    """初始化对话日志文件，按日期存储"""
+# ============ 日志系统 ============
+def _init_logs():
+    """初始化两个日志：控制台日志 + 对话日志"""
     from datetime import datetime
     log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
     os.makedirs(log_dir, exist_ok=True)
     date_str = datetime.now().strftime('%Y-%m-%d')
-    return os.path.join(log_dir, f'chat-{date_str}.log')
+    return (
+        os.path.join(log_dir, f'console-{date_str}.log'),
+        os.path.join(log_dir, f'chat-{date_str}.log'),
+    )
 
-_chat_log_path = _init_chat_log()
+_console_log_path, _chat_log_path = _init_logs()
 
 def chat_log(role: str, text: str):
-    """记录对话到日志文件"""
+    """记录用户对话到对话日志（仅用户指令和小龙回复）"""
     from datetime import datetime
     try:
         ts = datetime.now().strftime('%H:%M:%S')
@@ -51,7 +54,7 @@ def chat_log(role: str, text: str):
 
 
 class _TeeWriter:
-    """同时输出到控制台和日志文件"""
+    """同时输出到控制台和控制台日志文件"""
     def __init__(self, original, log_path):
         self._original = original
         self._log_path = log_path
@@ -59,7 +62,7 @@ class _TeeWriter:
 
     def write(self, text):
         self._original.write(text)
-        if text.strip():  # 跳过空行
+        if text.strip():
             with self._lock:
                 try:
                     from datetime import datetime
@@ -79,9 +82,9 @@ class _TeeWriter:
     def isatty(self):
         return False
 
-# 将stdout和stderr同时输出到日志文件
-sys.stdout = _TeeWriter(sys.stdout, _chat_log_path)
-sys.stderr = _TeeWriter(sys.stderr, _chat_log_path)
+# stdout/stderr → 控制台日志（所有print内容）
+sys.stdout = _TeeWriter(sys.stdout, _console_log_path)
+sys.stderr = _TeeWriter(sys.stderr, _console_log_path)
 
 import sounddevice as sd
 from audio_io import AudioRecorder, auto_detect_devices, check_duplex_support, fast_resample

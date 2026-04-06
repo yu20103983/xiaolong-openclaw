@@ -172,7 +172,7 @@ def play_audio(audio_float32, first=False, interrupt_check=None):
 
 # ============ 全局组件 ============
 asr = ASREngine()
-tts = TTSEngine(voice=TTS_VOICE, rate=TTS_RATE)
+tts = TTSEngine(engine="edge", voice=TTS_VOICE, rate=TTS_RATE)
 agent = AgentClient(working_dir=PI_WORKING_DIR, provider=PI_PROVIDER, model=PI_MODEL)
 session = SessionController()
 recorder = AudioRecorder(device_id=HFP_IN, sample_rate=HFP_IN_SR, target_sr=16000,

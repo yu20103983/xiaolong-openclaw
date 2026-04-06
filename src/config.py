@@ -18,7 +18,8 @@ TTS_RATE = "+10%"         # TTS 语速
 
 # ============ 播放管线 ============
 MAX_MERGE_CLAUSES = 2     # 最多合并逗号短句数（提升语气连贯性）
-INPUT_SILENCE_TIMEOUT = 4.0  # 静音超时后发送指令（秒）
+INPUT_SILENCE_TIMEOUT = 4.0  # 静音超时后发送指令（秒）—— 长超时（默认）
+INPUT_QUICK_TIMEOUT = 1.5   # 短超时：输入看起来已经完整时用
 
 # ============ 会话 ============
 AUTO_SLEEP_TIMEOUT = 0    # 无活动自动休眠秒数 (0=禁用)

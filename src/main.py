@@ -8,6 +8,25 @@ import numpy as np
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 sys.path.insert(0, os.path.dirname(__file__))
 
+# Windows: 禁用 CMD QuickEdit 模式，防止鼠标点击导致程序卡住
+def _disable_quickedit():
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+        # 清除 ENABLE_QUICK_EDIT_MODE(0x0040) 和 ENABLE_INSERT_MODE(0x0020)
+        new_mode = mode.value & ~0x0040 & ~0x0020
+        # 保留 ENABLE_EXTENDED_FLAGS(0x0080) 使设置生效
+        new_mode |= 0x0080
+        kernel32.SetConsoleMode(handle, new_mode)
+    except Exception:
+        pass
+
+if sys.platform == 'win32':
+    _disable_quickedit()
+
 import sounddevice as sd
 from audio_io import AudioRecorder, auto_detect_devices, check_duplex_support, fast_resample
 from asr_engine import ASREngine
@@ -167,29 +186,22 @@ input_timer = None           # 静音超时定时器
 
 
 # ============ 提示音 ============
-def _generate_chime(freq, duration=0.15, volume=0.5):
-    """生成清亮的铃声提示音(带谐波+快速衰减)"""
-    sr = 24000
-    t = np.linspace(0, duration, int(sr * duration), dtype=np.float32)
-    # 基频 + 二次谐波 + 三次谐波, 模拟铃声音色
-    tone = (
-        np.sin(2 * np.pi * freq * t) * 1.0 +
-        np.sin(2 * np.pi * freq * 2 * t) * 0.3 +
-        np.sin(2 * np.pi * freq * 3 * t) * 0.1
-    )
-    # 快速起音 + 指数衰减, 模拟敲击感
-    envelope = np.exp(-t * 12) * (1 - np.exp(-t * 500))
-    return (tone * envelope * volume / 1.4).astype(np.float32)
+def _load_chime(filename):
+    """从 assets/ 加载提示音 wav 文件, 返回 24kHz float32"""
+    import wave
+    path = os.path.join(os.path.dirname(__file__), '..', 'assets', filename)
+    if not os.path.exists(path):
+        print(f"[Audio] 提示音缺失: {path}, 使用静音")
+        return np.zeros(2400, dtype=np.float32)
+    with wave.open(path, 'r') as w:
+        frames = w.readframes(w.getnframes())
+        data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    return data
 
-# 送入提示音: 清亮上行双音 "叮咚" (C6→E6)
-_c1 = _generate_chime(1047, duration=0.12, volume=0.55)  # C6
-_c2 = _generate_chime(1319, duration=0.12, volume=0.55)  # E6
-BEEP_SEND = np.concatenate([_c1, np.zeros(int(24000 * 0.03), dtype=np.float32), _c2])
-
-# 就绪提示音: 柔和下行双音 "咚叮" (E6→G6)
-_r1 = _generate_chime(1319, duration=0.1, volume=0.45)   # E6
-_r2 = _generate_chime(1568, duration=0.15, volume=0.5)   # G6
-BEEP_READY = np.concatenate([_r1, np.zeros(int(24000 * 0.03), dtype=np.float32), _r2])
+# 送入提示音: 上行双音 "叮咚" (C6→E6)
+BEEP_SEND = _load_chime('send.wav')
+# 就绪提示音: 下行双音 "咚叮" (E6→C6)
+BEEP_READY = _load_chime('ready.wav')
 
 def play_beep(beep_audio):
     """播放提示音(非阻塞但等完成)"""
@@ -601,12 +613,48 @@ def flush_input_buffer():
     threading.Thread(target=handle_command, args=(full_cmd,), daemon=True).start()
 
 
+def _estimate_input_timeout(text: str) -> float:
+    """智能判断输入超时时间。
+    如果输入看起来是完整句子，用短超时；否则用长超时等待后续输入。
+    
+    判断“完整”的标准：
+    1. 以句号/问号/叹号结尾，且长度>=3个字（排除ASR误加标点）
+    2. 是常见短指令模式（几点了、什么时间、停止播放等）
+    """
+    text = text.strip()
+    if not text:
+        return INPUT_SILENCE_TIMEOUT
+    
+    # 短指令模式：常见的完整短句，不需要等待后续
+    short_patterns = [
+        r'几点', r'什么时间', r'今天几号', r'星期几', r'周几',
+        r'停止', r'关闭', r'打开', r'播放', r'暂停', r'继续',
+        r'天气', r'温度', r'下一首', r'上一首', r'换一首',
+        r'谢谢', r'好的', r'收到',
+    ]
+    for pat in short_patterns:
+        if re.search(pat, text):
+            return INPUT_QUICK_TIMEOUT
+    
+    # 以句号/问号/叹号结尾，且足够长
+    if len(text) >= 3 and re.search(r'[。！？!?]$', text):
+        return INPUT_QUICK_TIMEOUT
+    
+    # 其他情况用长超时，给用户足够时间继续说
+    return INPUT_SILENCE_TIMEOUT
+
+
 def reset_input_timer():
-    """重置静音超时定时器"""
+    """重置静音超时定时器，根据当前累积输入智能调整超时时间"""
     global input_timer
     if input_timer:
         input_timer.cancel()
-    input_timer = threading.Timer(INPUT_SILENCE_TIMEOUT, flush_input_buffer)
+    # 根据已累积的全部输入判断超时
+    full_text = "。".join(input_buffer) if input_buffer else ""
+    timeout = _estimate_input_timeout(full_text)
+    if timeout != INPUT_SILENCE_TIMEOUT:
+        print(f"  [智能超时] {timeout}s (检测到完整输入)", flush=True)
+    input_timer = threading.Timer(timeout, flush_input_buffer)
     input_timer.start()
 
 
@@ -697,18 +745,55 @@ def main():
     print("  Ctrl+C 退出")
     print("=" * 50, flush=True)
 
-    print("\n[Init] ASR...", flush=True)
-    asr.init()
-    print("[Init] TTS 预缓存...", flush=True)
-    tts.precache()
-    print("[Init] OpenClaw Agent...", flush=True)
-    agent.start()
+    # ========== 并行初始化（ASR、TTS、Agent 互不依赖）==========
+    init_errors = []
+
+    def _init_asr():
+        try:
+            print("[Init] ASR...", flush=True)
+            asr.init()
+            print("[Init] ASR ✅", flush=True)
+        except Exception as e:
+            init_errors.append(f"ASR: {e}")
+            print(f"[Init] ASR 失败: {e}", flush=True)
+
+    def _init_tts():
+        try:
+            print("[Init] TTS 预缓存...", flush=True)
+            tts.precache()
+            print("[Init] TTS ✅", flush=True)
+        except Exception as e:
+            init_errors.append(f"TTS: {e}")
+            print(f"[Init] TTS 预缓存失败: {e}", flush=True)
+
+    def _init_agent():
+        try:
+            print("[Init] OpenClaw Agent...", flush=True)
+            agent.start()
+            print("[Init] Agent ✅", flush=True)
+        except Exception as e:
+            init_errors.append(f"Agent: {e}")
+            print(f"[Init] Agent 启动失败: {e}", flush=True)
+
+    t_asr = threading.Thread(target=_init_asr, daemon=True)
+    t_tts = threading.Thread(target=_init_tts, daemon=True)
+    t_agent = threading.Thread(target=_init_agent, daemon=True)
+    t_asr.start()
+    t_tts.start()
+    t_agent.start()
+
+    # 等待全部完成
+    t_asr.join(timeout=30)
+    t_tts.join(timeout=30)
+    t_agent.join(timeout=30)
+
+    if init_errors:
+        print(f"[Init] 警告: 部分初始化失败: {init_errors}", flush=True)
+
+    # 发送系统提示词（Agent已就绪后）
     print("[Init] 系统提示词...", flush=True)
-    # Gateway 模式:system prompt 通过 workspace 文件配置
-    # steer 命令通过 bridge 传递(bridge 会忽略但记录日志)
     agent._send({"type": "steer", "message": SYSTEM_PROMPT})
     agent.save_steer(SYSTEM_PROMPT)
-    time.sleep(0.5)
     print("[Init] ✅ 就绪\n", flush=True)
 
     recorder.start(callback=feed_audio)

@@ -257,7 +257,7 @@ _STOP_SINGLE_CHARS = {'停', '止', '终'}
 def start_interrupt_listen(stop_event, text_done_event=None):
     """开始监听(非阻塞)。
     - '终止' 随时生效，立即设置 stop_event
-    - 其他语音: 只在 text_done_event 已设置后才传给 session 排队
+    - 其他语音: 只在 text_done_event 已设置后才接受，直接排队
     """
     def _on_final(text):
         print(f"\n  [监听] {text}", flush=True)
@@ -268,9 +268,13 @@ def start_interrupt_listen(stop_event, text_done_event=None):
                 or 'stop' in text.lower()):
             stop_event.set()
             return
-        # 非终止词: 只在 agent 输出结束后才接受指令排队
+        # 非终止词: 只在 agent 输出结束后才接受
         if text_done_event and text_done_event.is_set():
-            session.process_text(text, is_final=True)
+            # 直接排队，不要求唤醒词前缀
+            cmd = re.sub(r'^[,，::。.、\s]+', '', text)
+            cmd = re.sub(r'[。．.\uff01!？?]+$', '', cmd).strip()
+            if cmd and len(cmd) > 1:
+                session.queue_command(cmd)
 
     asr.set_callbacks(on_final=_on_final)
     if is_duplex:
@@ -484,7 +488,7 @@ def handle_command(cmd):
             while not sentence_queue.empty():
                 try: sentence_queue.get_nowait()
                 except: break
-            time.sleep(1)
+            time.sleep(0.3)
             play_simple("好的,已终止")
             break
 
@@ -505,6 +509,8 @@ def handle_command(cmd):
             beep_ready_played = True
             print("  [◀ 就绪] agent 输出结束，可以输入", flush=True)
             play_beep(BEEP_READY)
+            # 清除回声积累，重新开始监听用户说话
+            asr.reset()
             # 立即检查排队指令
             queued_early = session.pop_queued_command()
             if queued_early:

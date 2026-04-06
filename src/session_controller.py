@@ -338,6 +338,12 @@ class SessionController:
         """是否有排队指令(无锁快速检查)"""
         return len(self._queued_commands) > 0
 
+    def queue_command(self, cmd: str):
+        """直接添加指令到排队队列(不需要唤醒词)"""
+        with self._lock:
+            self._queued_commands.append(cmd)
+            print(f"[Session] ■ 排队指令({len(self._queued_commands)}): {cmd}")
+
     def _try_extract_command(self, text: str) -> Optional[str]:
         """从文本中提取指令内容
         策略:

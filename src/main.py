@@ -491,6 +491,19 @@ def handle_command(cmd):
         with clauses_lock:
             has_more = play_idx < len(clauses)
 
+        # ◀ agent 流式输出已结束: 播就绪提示音 (必须在 has_more 检查之前)
+        if text_done_event.is_set() and not beep_ready_played:
+            beep_ready_played = True
+            print("  [◀ 就绪] agent 输出结束，可以输入", flush=True)
+            play_beep(BEEP_READY)
+            asr.reset()
+            queued_early = session.pop_queued_command()
+            if queued_early:
+                print(f"  [插队] 中断播报，处理排队指令: {queued_early}", flush=True)
+                sd.stop()
+                aborted = True
+                break
+
         if not has_more:
             if all_text_done.is_set():
                 break
@@ -499,21 +512,6 @@ def handle_command(cmd):
                 listening = True
             time.sleep(0.2)
             continue
-
-        # ◀ agent 流式输出已结束: 播就绪提示音
-        if text_done_event.is_set() and not beep_ready_played:
-            beep_ready_played = True
-            print("  [◀ 就绪] agent 输出结束，可以输入", flush=True)
-            play_beep(BEEP_READY)
-            # 清除回声积累，重新开始监听用户说话
-            asr.reset()
-            # 立即检查排队指令
-            queued_early = session.pop_queued_command()
-            if queued_early:
-                print(f"  [插队] 中断播报，处理排队指令: {queued_early}", flush=True)
-                sd.stop()
-                aborted = True
-                break
 
         # 找最佳音频
         best = _find_best_audio()

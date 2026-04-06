@@ -100,10 +100,17 @@ def _strip_wake_prefix(text: str) -> str:
 
 def _is_sleep_command(text: str) -> bool:
     """检测是否是休眠指令: 小龙(小龙)退下/再见"""
+    if not _has_wake_word(text):
+        return False
+    if re.search(_TUIXIA, text):
+        return True
+    if re.search(_ZAIJIAN, text):
+        return True
+    return False
 
 
 def _extract_after_long(text: str) -> Optional[str]:
-    """从文本中任意位置找“龙”(含近音),提取其后的内容作为指令。
+    """从文本中任意位置找"龙"(含近音),提取其后的内容作为指令。
     例如: '什么龙帮我查天气' → '帮我查天气'
           '龙,查一下' → '查一下'
     """
@@ -114,17 +121,10 @@ def _extract_after_long(text: str) -> Optional[str]:
     cmd = re.sub(r'[。．.\uff01!？?]+$', '', cmd).strip()
     if not cmd or len(cmd) <= 1:
         return None
-    # 确保不是又一个“龙”
+    # 确保不是又一个"龙"
     if _is_only_wake_word(cmd):
         return None
     return cmd
-    if not _has_wake_word(text):
-        return False
-    if re.search(_TUIXIA, text):
-        return True
-    if re.search(_ZAIJIAN, text):
-        return True
-    return False
 
 
 # ============ 会话控制器 ============
@@ -244,7 +244,7 @@ class SessionController:
             print(f"[Session] 等待指令... ({text})")
             return
 
-        # 4. 文本中任意位置含“龙”→ 提取龙后内容作为指令
+        # 4. 文本中任意位置含"龙"→ 提取龙后内容作为指令
         long_cmd = _extract_after_long(text)
         if long_cmd:
             self._pending_command = False
@@ -253,10 +253,10 @@ class SessionController:
             if self._on_command:
                 self._on_command(long_cmd)
             return
-        # 只有“龙”没有后续内容 → 视为截断的唤醒词
+        # 只有"龙"没有后续内容 → 视为截断的唤醒词
         if re.search(_LONG_CHARS, text):
             cleaned = re.sub(_LONG_CHARS, '', text)
-            cleaned = re.sub(r'[,，::。.、\s!!？?]', '', cleaned)
+            cleaned = re.sub(r'[,,::。.、\s!!??]', '', cleaned)
             if len(cleaned) == 0:
                 self._pending_command = True
                 self._pending_time = time.time()
@@ -325,7 +325,7 @@ class SessionController:
         # 其他文本忽略(环境噪音/agent回复被麦克风捕获)
 
     def pop_queued_command(self) -> Optional[str]:
-        """取出并清除所有排队指令，拼接返回"""
+        """取出并清除所有排队指令,拼接返回"""
         with self._lock:
             if not self._queued_commands:
                 return None
@@ -357,8 +357,8 @@ class SessionController:
         cmd = _strip_wake_prefix(text)
 
         # 去掉开头和末尾的标点符号
-        cmd = re.sub(r'^[,，:：。.、\s]+', '', cmd)
-        cmd = re.sub(r'[。．.!！?？]+$', '', cmd).strip()
+        cmd = re.sub(r'^[,,::。.、\s]+', '', cmd)
+        cmd = re.sub(r'[。..!!??]+$', '', cmd).strip()
 
         if not cmd or len(cmd) <= 1:
             return None

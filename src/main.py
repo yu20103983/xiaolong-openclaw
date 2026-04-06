@@ -27,6 +27,28 @@ def _disable_quickedit():
 if sys.platform == 'win32':
     _disable_quickedit()
 
+
+# ============ 对话日志记录 ============
+def _init_chat_log():
+    """初始化对话日志文件，按日期存储"""
+    from datetime import datetime
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    return os.path.join(log_dir, f'chat-{date_str}.log')
+
+_chat_log_path = _init_chat_log()
+
+def chat_log(role: str, text: str):
+    """记录对话到日志文件"""
+    from datetime import datetime
+    try:
+        ts = datetime.now().strftime('%H:%M:%S')
+        with open(_chat_log_path, 'a', encoding='utf-8') as f:
+            f.write(f'[{ts}] [{role}] {text}\n')
+    except Exception:
+        pass
+
 import sounddevice as sd
 from audio_io import AudioRecorder, auto_detect_devices, check_duplex_support, fast_resample
 from asr_engine import ASREngine
@@ -325,6 +347,7 @@ def handle_command(cmd):
     print(f"\n{'='*50}", flush=True)
     print(f"[用户] {cmd}", flush=True)
     print(f"{'='*50}", flush=True)
+    chat_log('用户', cmd)
 
     if is_duplex:
         # 全双工模式:录音不停,直接设置打断监听
@@ -367,6 +390,7 @@ def handle_command(cmd):
         print(f"\n{'-'*50}", flush=True)
         print(f"[小龙] {full_text}", flush=True)
         print(f"{'-'*50}", flush=True)
+        chat_log('小龙', full_text)
         # 检测 agent 输出中的连续对话标记
         if SessionController.check_continuous_end(full_text):
             session.exit_continuous_mode("代理结束")

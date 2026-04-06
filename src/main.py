@@ -224,6 +224,7 @@ def clean_for_speech(text):
 
 def play_notify_sound():
     """播放排队提示音（不打断当前音频播放）"""
+    print("[Beep] 排队提示音", flush=True)
     try:
         import winsound
         notify_wav = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'queued.wav')
@@ -457,6 +458,7 @@ def handle_command(cmd):
     agent.set_callbacks(on_text_delta=on_delta, on_response_complete=on_complete)
 
     # ▶ 送入提示音
+    print("[Beep] 发送提示音", flush=True)
     play_beep(BEEP_SEND)
 
     agent.prompt_async(cmd)
@@ -604,6 +606,7 @@ def handle_command(cmd):
         if text_done_event.is_set() and not beep_ready_played:
             beep_ready_played = True
             print("  [◀ 就绪] agent 输出结束，可以输入", flush=True)
+            print("[Beep] 就绪提示音", flush=True)
             play_beep(BEEP_READY)
             asr.reset()
             queued_early = session.pop_queued_command()
@@ -687,6 +690,7 @@ def handle_command(cmd):
                 print(f"  [插队] 播放中中断，处理排队指令: {queued_early}", flush=True)
                 if not beep_ready_played:
                     beep_ready_played = True
+                    print("[Beep] 就绪提示音", flush=True)
                     play_beep(BEEP_READY)
                 aborted = True
                 break

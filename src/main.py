@@ -61,6 +61,15 @@ def _check_duplex():
 
 _check_duplex()
 
+# 蓝牙设备需要静音前缀和等待，本地设备不需要
+is_bluetooth = hasattr(_init_audio_devices, '_det') and _init_audio_devices._det.get('mode', 'local') != 'local'
+
+# 音频切换等待时间（秒）
+BT_SWITCH_DELAY = 0.25 if is_bluetooth else 0.0
+BT_SILENCE_PREFIX = 0.25 if is_bluetooth else 0.0
+PRE_PLAY_DELAY = 0.15 if is_bluetooth else 0.02
+POST_PLAY_DELAY = 0.1 if is_bluetooth else 0.02
+
 SYSTEM_PROMPT = f"""你是"小龙",一个运行在用户电脑上的语音助手。你通过耳机与用户进行实时语音对话。
 
 ★★★ 交互方式说明 ★★★
@@ -124,8 +133,8 @@ def resample_to_a2dp(audio_float32):
 
 def play_audio(audio_float32, first=False):
     out = resample_to_a2dp(audio_float32)
-    if first:
-        out = np.concatenate([np.zeros(int(A2DP_SR * 0.25), dtype=np.float32), out])
+    if first and BT_SILENCE_PREFIX > 0:
+        out = np.concatenate([np.zeros(int(A2DP_SR * BT_SILENCE_PREFIX), dtype=np.float32), out])
     sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
     sd.wait()
 
@@ -145,6 +154,31 @@ input_buffer = []            # 输入积累缓冲
 input_timer = None           # 静音超时定时器
 
 
+# ============ 提示音 ============
+def _generate_beep(freq, duration=0.12, volume=0.3):
+    """生成简单正弦波提示音"""
+    t = np.linspace(0, duration, int(24000 * duration), dtype=np.float32)
+    # 淡入淡出避免卡啲声
+    envelope = np.ones_like(t)
+    fade = int(24000 * 0.01)
+    envelope[:fade] = np.linspace(0, 1, fade)
+    envelope[-fade:] = np.linspace(1, 0, fade)
+    return (np.sin(2 * np.pi * freq * t) * volume * envelope).astype(np.float32)
+
+# 送入提示音: 高音“嘼”
+BEEP_SEND = _generate_beep(880, duration=0.1, volume=0.25)
+# 就绪提示音: 低音“嘼嘼”两声
+_b1 = _generate_beep(660, duration=0.08, volume=0.2)
+_b2 = _generate_beep(880, duration=0.08, volume=0.2)
+BEEP_READY = np.concatenate([_b1, np.zeros(int(24000 * 0.05), dtype=np.float32), _b2])
+
+def play_beep(beep_audio):
+    """播放提示音(非阻塞但等完成)"""
+    out = resample_to_a2dp(beep_audio)
+    sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
+    sd.wait()
+
+
 def feed_audio(data):
     asr.feed_audio(data)
 
@@ -153,7 +187,7 @@ def play_simple(text):
     if not is_duplex:
         recorder.stop()
     sd.stop()  # 确保之前的播放已停止
-    time.sleep(0.15)
+    time.sleep(PRE_PLAY_DELAY)
     print(f"[TTS] {text}", flush=True)
     audio = tts.synthesize(text)
     if audio is not None:
@@ -162,7 +196,7 @@ def play_simple(text):
         print(f"  [TTS] 播放完成", flush=True)
     else:
         print(f"  [TTS] 合成失败!", flush=True)
-    time.sleep(0.1)
+    time.sleep(POST_PLAY_DELAY)
     asr.reset()
     if not is_duplex:
         recorder.start(callback=feed_audio)
@@ -256,9 +290,14 @@ def handle_command(cmd):
             session.exit_continuous_mode("代理结束")
         elif SessionController.check_continuous_start(full_text):
             session.enter_continuous_mode()
-        # 连续对话活动时间在播报完成后刷新(见 handle_command 末尾)
+        # ◀ 就绪提示音: agent 流式输出结束，用户可以输入了
+        text_done_event.set()
 
     agent.set_callbacks(on_text_delta=on_delta, on_response_complete=on_complete)
+
+    # ▶ 送入提示音
+    play_beep(BEEP_SEND)
+
     agent.prompt_async(cmd)
 
     # ========== 并发合成 + FIFO播放 ==========
@@ -276,6 +315,9 @@ def handle_command(cmd):
     merges = {}           # {(start, end): {text, audio, ready}}
     clauses_lock = threading.Lock()
     all_text_done = threading.Event()
+    text_done_event = threading.Event()  # agent 流式输出结束标志
+    beep_ready_played = False            # 就绪提示音是否已播放
+    queued_early = None                  # 播报中断时提前取出的排队指令
     aborted = False
     stop_event = threading.Event()
     listening = False
@@ -406,6 +448,21 @@ def handle_command(cmd):
             time.sleep(0.2)
             continue
 
+        # ◀ agent 流式输出已结束: 播就绪提示音 + 检查排队指令
+        if text_done_event.is_set() and not beep_ready_played:
+            beep_ready_played = True
+            print("  [◀ 就绪] agent 输出结束，可以输入", flush=True)
+            # 检查是否有排队指令，有则立即中断播报
+            queued_early = session.pop_queued_command()
+            if queued_early:
+                print(f"  [插队] 中断播报，处理排队指令: {queued_early}", flush=True)
+                sd.stop()
+                play_beep(BEEP_READY)
+                # 直接跳出播放循环，在末尾处理排队指令
+                aborted = True  # 跳过等待 response
+                break
+            play_beep(BEEP_READY)
+
         # 找最佳音频
         best = _find_best_audio()
         if best is None:
@@ -438,7 +495,8 @@ def handle_command(cmd):
             stop_interrupt_listen()
             listening = False
             sd.stop()
-            time.sleep(0.25)
+            if BT_SWITCH_DELAY > 0:
+                time.sleep(BT_SWITCH_DELAY)
             first_play = True  # 切换后需要重新加静音前缀
 
         if stop_event.is_set():
@@ -447,13 +505,26 @@ def handle_command(cmd):
         # 首次播放:加静音前缀让蓝牙就绪
         if first_play:
             sd.stop()
-            time.sleep(0.15)
+            if PRE_PLAY_DELAY > 0:
+                time.sleep(PRE_PLAY_DELAY)
 
         tag = f"x{span}" if span > 1 else ""
         print(f"  [播放{tag}] {text[:60]}", flush=True)
         play_audio(audio, first=first_play)
         first_play = False
         play_idx = next_idx
+
+        # 每段播放完检查: agent已结束且有排队指令 → 中断剩余播报
+        if text_done_event.is_set() and session._queued_command:
+            queued_early = session.pop_queued_command()
+            if queued_early:
+                print(f"  [插队] 中断播报，处理排队指令: {queued_early}", flush=True)
+                sd.stop()
+                if not beep_ready_played:
+                    beep_ready_played = True
+                    play_beep(BEEP_READY)
+                aborted = True
+                break
 
     collector_thread.join(timeout=5)
 
@@ -474,8 +545,8 @@ def handle_command(cmd):
     if not is_duplex:
         recorder.start(callback=feed_audio)
 
-    # 检查是否有排队的指令
-    queued = session.pop_queued_command()
+    # 检查是否有排队的指令(包括播报中断时提前取出的)
+    queued = queued_early if queued_early else session.pop_queued_command()
     if queued:
         print(f"\n[排队指令] 执行: {queued}", flush=True)
         on_command(queued)

@@ -106,7 +106,7 @@ class ASREngine:
         """异步识别线程：从队列取音频 → VAD → SenseVoice 识别"""
         while self._running:
             # 等待新音频数据
-            self._queue_event.wait(timeout=0.5)
+            self._queue_event.wait(timeout=0.05)
             self._queue_event.clear()
 
             # 批量取出队列中所有音频块

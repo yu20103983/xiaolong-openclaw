@@ -42,6 +42,7 @@ class AgentClient:
         self._on_error: Optional[Callable[[str], None]] = None
         self._current_response = ""
         self._response_event = threading.Event()
+        self._connected_event = threading.Event()  # Bridge连接就绪信号
         self._lock = threading.Lock()
         self._steer_message: Optional[str] = None
 
@@ -84,11 +85,14 @@ class AgentClient:
         self._reader_thread.start()
         self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
         self._stderr_thread.start()
-        # 等待 Bridge 连接就绪
-        time.sleep(3)
-        if self._proc.poll() is not None:
-            raise RuntimeError("Gateway Bridge 启动失败")
-        print("[Agent] OpenClaw Gateway 已连接")
+        # 等待 Bridge 连接就绪（最多等5秒，通常1秒内完成）
+        self._connected_event.clear()
+        if not self._connected_event.wait(timeout=5):
+            if self._proc.poll() is not None:
+                raise RuntimeError("Gateway Bridge 启动失败")
+            print("[Agent] 警告: Bridge未发送就绪信号，继续启动")
+        else:
+            print(f"[Agent] OpenClaw Gateway 已连接")
 
     def _cleanup_proc(self):
         """安全清理旧的子进程及其管道"""
@@ -169,10 +173,14 @@ class AgentClient:
                 if self._on_text_delta:
                     self._on_text_delta(delta)
 
+        elif event_type == "bridge_ready":
+            # Bridge已连接Gateway，标记就绪
+            self._connected_event.set()
+
         elif event_type == "tool_execution_start":
             if not self._current_response.strip() and self._on_text_delta:
                 tool_name = event.get("toolName", "")
-                hint = "好的，我来处理一下。"
+                hint = "好的，我来处理一下"
                 self._current_response += hint
                 self._on_text_delta(hint)
 

@@ -111,7 +111,8 @@ function handleGatewayMessage(msg) {
     if (msg.ok) {
       connected = true;
       process.stderr.write("[bridge] Gateway authenticated\n");
-      // 订阅会话事件 — Gateway 自动推送，无需单独订阅
+      // 通知 Python 端已就绪
+      emit({ type: "bridge_ready" });
       process.stderr.write(`[bridge] Ready, session=${SESSION_KEY}\n`);
     } else {
       process.stderr.write(`[bridge] Connect failed: ${JSON.stringify(msg.error)}\n`);

@@ -646,6 +646,9 @@ def handle_command(cmd):
 
     processing = False
     session.set_state(SessionState.ACTIVE)
+    # 指令执行完毕后设置 pending，用户短时间内继续说话无需唤醒词
+    session._pending_command = True
+    session._pending_time = time.time()
     # TTS 播报全部完成后再刷新连续对话活动时间
     if session.continuous_mode:
         session.refresh_continuous_activity()

@@ -13,8 +13,10 @@ DUPLEX_MODE = None        # 全双工模式: True/False/None(自动检测)
 PREFER_LOCAL = False      # 优先本地设备（跳过蓝牙检测）
 
 # ============ TTS ============
-TTS_VOICE = "xiaoxiao"    # TTS 语音：xiaoxiao/yunxi/xiaoyi/yunjian
-TTS_RATE = "+10%"         # TTS 语速
+TTS_ENGINE = "edge"           # TTS 引擎：edge (在线, 音质好) / local (离线, 快)
+TTS_VOICE = "xiaoxiao"        # edge-tts 语音：xiaoxiao/yunxi/xiaoyi/yunjian
+TTS_RATE = "+10%"             # edge-tts 语速
+TTS_LOCAL_MODEL = "matcha-zh-baker"  # 本地备选模型（edge失败时自动回退）
 
 # ============ 播放管线 ============
 MAX_MERGE_CLAUSES = 2     # 最多合并逗号短句数（提升语气连贯性）

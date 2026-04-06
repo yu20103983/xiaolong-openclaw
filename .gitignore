@@ -19,6 +19,7 @@ cache/
 
 # Audio files
 *.wav
+!assets/*.wav
 *.mp3
 *.m4a
 *.ogg

@@ -146,10 +146,14 @@ def clean_for_speech(text):
 
 
 def play_notify_sound():
-    """播放系统提示音（不打断当前音频播放）"""
+    """播放排队提示音（不打断当前音频播放）"""
     try:
         import winsound
-        winsound.PlaySound('SystemExclamation', winsound.SND_ALIAS | winsound.SND_ASYNC | winsound.SND_NOSTOP)
+        notify_wav = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'queued.wav')
+        if os.path.exists(notify_wav):
+            winsound.PlaySound(notify_wav, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NOSTOP)
+        else:
+            winsound.PlaySound('SystemHand', winsound.SND_ALIAS | winsound.SND_ASYNC | winsound.SND_NOSTOP)
     except Exception:
         pass
 

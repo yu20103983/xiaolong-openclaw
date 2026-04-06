@@ -81,6 +81,7 @@ class TTSEngine:
         "好的，再见", "好的，我来看看", "嗯", "好",
         "好的，我来帮你", "好的，马上",
         "连续对话已结束，需要时再叫我",
+        "收到，等我处理完当前任务",
     ]
 
     CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache", "tts")

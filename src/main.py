@@ -685,7 +685,9 @@ def on_command(cmd):
     global long_input_mode, input_buffer
 
     if processing:
-        # 播放中无法用此路径打断(打断由 listen_for_interrupt 处理)
+        # 处理中收到新指令，排队并提示用户
+        session.queue_command(cmd)
+        speak_async("收到，等我处理完当前任务")
         return
 
     # 检测长输入模式触发

@@ -10,3 +10,6 @@ sherpa-onnx>=1.10
 # TTS
 edge-tts>=6.1
 miniaudio>=1.59
+
+# AEC (Acoustic Echo Cancellation)
+pyaec>=1.0

@@ -110,6 +110,7 @@ from asr_engine import ASREngine
 from tts_engine import TTSEngine
 from agent_client import AgentClient
 from session_controller import SessionController, SessionState
+from aec_engine import EchoCanceller
 from config import *
 
 # 全局双工模式标志,启动时检测设置
@@ -174,15 +175,18 @@ PRE_PLAY_DELAY = 0.15 if is_bluetooth else 0.02
 POST_PLAY_DELAY = 0.1 if is_bluetooth else 0.02
 
 
-# ============ 回音消除开关 ============
+# ============ 回音消除 ============
+# AEC 引擎（全局实例，在 main() 中初始化）
+aec_engine = EchoCanceller(frame_size=160, filter_length=3200, sample_rate=16000)
+
 def echo_mute():
-    """播放前静音麦克风（ECHO_CANCEL 开启时生效）"""
-    if ECHO_CANCEL:
+    """播放前静音麦克风（仅 mute 模式生效）"""
+    if ECHO_CANCEL == "mute":
         recorder.mute()
 
 def echo_unmute():
-    """播放后恢复麦克风（ECHO_CANCEL 开启时生效）"""
-    if ECHO_CANCEL:
+    """播放后恢复麦克风（仅 mute 模式生效）"""
+    if ECHO_CANCEL == "mute":
         recorder.unmute()
 
 SYSTEM_PROMPT = f"""你是"小龙",一个运行在用户电脑上的语音助手。你通过耳机与用户进行实时语音对话。
@@ -260,17 +264,23 @@ def resample_to_a2dp(audio_float32):
     return fast_resample(audio_float32, 24000, A2DP_SR)
 
 
+def _feed_aec_reference(audio_a2dp_sr: np.ndarray):
+    """将播放的音频作为 AEC 参考信号送入（重采样到 16kHz）"""
+    if ECHO_CANCEL == "aec" and aec_engine.enabled:
+        ref_16k = fast_resample(audio_a2dp_sr, A2DP_SR, 16000)
+        aec_engine.feed_reference(ref_16k)
+
+
 def play_audio(audio_float32, first=False, interrupt_check=None):
     """播放音频。interrupt_check 为可选回调,返回 True 时立即中断播放。
-    返回 True 表示被中断, False 表示正常播完。
-    播放前自动 mute 麦克风防回音,播放后自动 unmute。"""
+    返回 True 表示被中断, False 表示正常播完。"""
     out = resample_to_a2dp(audio_float32)
     if first and BT_SILENCE_PREFIX > 0:
         out = np.concatenate([np.zeros(int(A2DP_SR * BT_SILENCE_PREFIX), dtype=np.float32), out])
     echo_mute()
+    _feed_aec_reference(out)
     sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
     if interrupt_check:
-        # 可中断模式: 轮询检查
         while sd.get_stream() and sd.get_stream().active:
             if interrupt_check():
                 sd.stop()
@@ -320,9 +330,10 @@ BEEP_SEND = _load_chime('send.wav')
 BEEP_READY = _load_chime('ready.wav')
 
 def play_beep(beep_audio):
-    """播放提示音(非阻塞但等完成)，播放期间 mute 防回音"""
+    """播放提示音(非阻塞但等完成)"""
     out = resample_to_a2dp(beep_audio)
     echo_mute()
+    _feed_aec_reference(out)
     sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
     sd.wait()
     echo_unmute()
@@ -335,6 +346,8 @@ RECORDER_WATCHDOG_TIMEOUT = 10  # 超过10秒没收到音频则重启录音
 def feed_audio(data):
     _watchdog["last_audio"] = time.time()
     if data is not None:
+        if ECHO_CANCEL == "aec" and aec_engine.enabled:
+            data = aec_engine.process(data)
         asr.feed_audio(data)
 
 
@@ -346,10 +359,10 @@ def play_simple(text):
     audio = tts.synthesize(text)
     if audio is not None:
         print(f"  [TTS] 合成OK: {len(audio)} samples", flush=True)
-        # 直接播放，不经过 play_audio（已经 mute 了）
         out = resample_to_a2dp(audio)
         if BT_SILENCE_PREFIX > 0:
             out = np.concatenate([np.zeros(int(A2DP_SR * BT_SILENCE_PREFIX), dtype=np.float32), out])
+        _feed_aec_reference(out)
         sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
         sd.wait()
         print(f"  [TTS] 播放完成", flush=True)
@@ -904,9 +917,11 @@ def main():
     global running
 
     duplex_str = "全双工(边说边听)" if is_duplex else "半双工(交替模式)"
+    echo_str = {"aec": "AEC声学回音消除", "mute": "播放时静音麦克风", False: "关闭"}.get(ECHO_CANCEL, str(ECHO_CANCEL))
     print("=" * 50)
     print("  🎧 小龙语音助手")
     print(f"  音频模式: {duplex_str}")
+    print(f"  回音消除: {echo_str}")
     print("  '小龙小龙' 唤醒 | '小龙小龙退下' 休眠")
     print("  '小龙,xxx' 发送指令(等静音后发送)")
     print("  '小龙,长段输入' → 说完后说'好了'")
@@ -926,6 +941,16 @@ def main():
         except Exception as e:
             init_errors.append(f"ASR: {e}")
             print(f"[Init] ASR 失败: {e}", flush=True)
+        # AEC 初始化（与 ASR 同线程，都是音频处理）
+        if ECHO_CANCEL == "aec":
+            try:
+                print("[Init] AEC 回音消除...", flush=True)
+                if aec_engine.init():
+                    print("[Init] AEC ✅", flush=True)
+                else:
+                    print("[Init] AEC 不可用，回退到 mute 模式", flush=True)
+            except Exception as e:
+                print(f"[Init] AEC 失败: {e}，回退到 mute 模式", flush=True)
 
     def _init_tts():
         try:

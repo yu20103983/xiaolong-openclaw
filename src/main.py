@@ -173,6 +173,18 @@ BT_SILENCE_PREFIX = 0.25 if is_bluetooth else 0.0
 PRE_PLAY_DELAY = 0.15 if is_bluetooth else 0.02
 POST_PLAY_DELAY = 0.1 if is_bluetooth else 0.02
 
+
+# ============ 回音消除开关 ============
+def echo_mute():
+    """播放前静音麦克风（ECHO_CANCEL 开启时生效）"""
+    if ECHO_CANCEL:
+        recorder.mute()
+
+def echo_unmute():
+    """播放后恢复麦克风（ECHO_CANCEL 开启时生效）"""
+    if ECHO_CANCEL:
+        recorder.unmute()
+
 SYSTEM_PROMPT = f"""你是"小龙",一个运行在用户电脑上的语音助手。你通过耳机与用户进行实时语音对话。
 
 ★★★ 交互方式说明 ★★★
@@ -255,21 +267,21 @@ def play_audio(audio_float32, first=False, interrupt_check=None):
     out = resample_to_a2dp(audio_float32)
     if first and BT_SILENCE_PREFIX > 0:
         out = np.concatenate([np.zeros(int(A2DP_SR * BT_SILENCE_PREFIX), dtype=np.float32), out])
-    recorder.mute()
+    echo_mute()
     sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
     if interrupt_check:
         # 可中断模式: 轮询检查
         while sd.get_stream() and sd.get_stream().active:
             if interrupt_check():
                 sd.stop()
-                recorder.unmute()
+                echo_unmute()
                 return True
             time.sleep(0.05)
-        recorder.unmute()
+        echo_unmute()
         return False
     else:
         sd.wait()
-        recorder.unmute()
+        echo_unmute()
         return False
 
 
@@ -310,10 +322,10 @@ BEEP_READY = _load_chime('ready.wav')
 def play_beep(beep_audio):
     """播放提示音(非阻塞但等完成)，播放期间 mute 防回音"""
     out = resample_to_a2dp(beep_audio)
-    recorder.mute()
+    echo_mute()
     sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
     sd.wait()
-    recorder.unmute()
+    echo_unmute()
 
 
 # 录音看门狗：跟踪最后一次收到音频的时间
@@ -327,7 +339,7 @@ def feed_audio(data):
 
 
 def play_simple(text):
-    recorder.mute()
+    echo_mute()
     sd.stop()  # 确保之前的播放已停止
     time.sleep(PRE_PLAY_DELAY)
     print(f"[TTS] {text}", flush=True)
@@ -345,7 +357,7 @@ def play_simple(text):
         print(f"  [TTS] 合成失败!", flush=True)
     time.sleep(POST_PLAY_DELAY)
     asr.reset()
-    recorder.unmute()
+    echo_unmute()
 
 
 def speak_async(text, then_state=None):
@@ -407,11 +419,11 @@ def start_interrupt_listen(stop_event, text_done_event=None):
     asr.set_callbacks(on_final=_on_final)
     # unmute 录音并重置ASR（清空残余回音）
     asr.reset()
-    recorder.unmute()
+    echo_unmute()
 
 def stop_interrupt_listen():
     """停止监听：mute 录音防回音"""
-    recorder.mute()
+    echo_mute()
     time.sleep(0.05)
 
 
@@ -426,11 +438,11 @@ def handle_command(cmd):
 
     if is_duplex:
         # 全双工模式:静音麦克风防回音,重置ASR
-        recorder.mute()
+        echo_mute()
         asr.reset()
     else:
         # 半双工模式:静音录音
-        recorder.mute()
+        echo_mute()
     time.sleep(0.1)
 
     # 流式文本收集
@@ -739,7 +751,7 @@ def handle_command(cmd):
     # 恢复正常 ASR 回调(打断监听期间会被替换)
     asr.set_callbacks(on_final=on_asr_final)
     asr.reset()
-    recorder.unmute()
+    echo_unmute()
 
     # 检查是否有排队的指令(包括播报中断时提前取出的)
     queued = queued_early if queued_early else session.pop_queued_command()

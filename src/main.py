@@ -177,7 +177,7 @@ POST_PLAY_DELAY = 0.1 if is_bluetooth else 0.02
 
 # ============ 回音消除 ============
 # AEC 引擎（全局实例，在 main() 中初始化）
-aec_engine = EchoCanceller(frame_size=160, filter_length=3200, sample_rate=16000)
+aec_engine = EchoCanceller(frame_size=160, filter_length=6400, sample_rate=16000)
 
 def echo_mute():
     """播放前静音麦克风（仅 mute 模式生效）"""

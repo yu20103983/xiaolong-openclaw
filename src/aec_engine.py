@@ -31,11 +31,11 @@ class EchoCanceller:
 
     参数:
         frame_size: 每帧样本数 (如 160 = 10ms@16kHz)
-        filter_length: 滤波器长度 (越长能消除越长延迟的回音, 如 3200 = 200ms@16kHz)
+        filter_length: 滤波器长度 (越长能消除越长延迟的回音, 默认 6400 = 400ms@16kHz)
         sample_rate: 采样率 (必须与输入音频一致, 通常 16000)
     """
 
-    def __init__(self, frame_size: int = 160, filter_length: int = 3200,
+    def __init__(self, frame_size: int = 160, filter_length: int = 6400,
                  sample_rate: int = 16000):
         self.frame_size = frame_size
         self.filter_length = filter_length
@@ -135,15 +135,14 @@ class EchoCanceller:
                 pos = n_samples
                 break
 
-            # AEC 处理
+            # AEC 处理：传 list of int16（不是 bytes）
             with self._lock:
                 cleaned_list = self._aec.cancel_echo(
-                    rec_frame.tobytes(), ref_frame.tobytes()
+                    rec_frame.tolist(), ref_frame.tolist()
                 )
 
-            # pyaec 返回 list of int (有符号字节), 转回 int16
-            cleaned_bytes = bytes(b & 0xFF for b in cleaned_list)
-            cleaned_int16 = np.frombuffer(cleaned_bytes, dtype=np.int16)
+            # pyaec 返回 list of int16 样本
+            cleaned_int16 = np.array(cleaned_list, dtype=np.int16)
             output_samples.append(cleaned_int16)
             pos += self.frame_size
 

@@ -329,7 +329,7 @@ class HFPKeepAlive:
 
 
 class AudioRecorder:
-    """蓝牙 HFP 麦克风录音器"""
+    """蓝牙 HFP 麦克风录音器，支持 mute/unmute 防回音"""
 
     def __init__(self, device_id: Optional[int] = None, sample_rate: int = 44100,
                  target_sr: int = 16000, block_size: int = 4410):
@@ -341,10 +341,29 @@ class AudioRecorder:
         self._stream: Optional[sd.InputStream] = None
         self._running = False
         self._callback: Optional[Callable[[np.ndarray], None]] = None
+        self._muted = False  # 静音标志：播放时抑制录音输入防回音
+
+    def mute(self):
+        """静音：录音流不停，但丢弃音频数据（防止TTS回音被ASR识别）"""
+        self._muted = True
+
+    def unmute(self):
+        """取消静音：恢复正常录音，同时清空队列中的残余回音"""
+        self.clear_queue()
+        self._muted = False
+
+    @property
+    def is_muted(self) -> bool:
+        return self._muted
 
     def _audio_callback(self, indata, frames, time_info, status):
         if status and 'input' not in str(status).lower():
             print(f"[AudioRecorder] Status: {status}")
+        if self._muted:
+            # 静音期间不处理音频，但仍然调用回调以更新看门狗计时器
+            if self._callback:
+                self._callback(None)
+            return
         audio = indata[:, 0].copy()
         # 重采样到目标采样率 (通常 44100 → 16000)
         if self.sample_rate != self.target_sr:

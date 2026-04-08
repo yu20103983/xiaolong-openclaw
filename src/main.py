@@ -250,21 +250,26 @@ def resample_to_a2dp(audio_float32):
 
 def play_audio(audio_float32, first=False, interrupt_check=None):
     """播放音频。interrupt_check 为可选回调,返回 True 时立即中断播放。
-    返回 True 表示被中断, False 表示正常播完。"""
+    返回 True 表示被中断, False 表示正常播完。
+    播放前自动 mute 麦克风防回音,播放后自动 unmute。"""
     out = resample_to_a2dp(audio_float32)
     if first and BT_SILENCE_PREFIX > 0:
         out = np.concatenate([np.zeros(int(A2DP_SR * BT_SILENCE_PREFIX), dtype=np.float32), out])
+    recorder.mute()
     sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
     if interrupt_check:
         # 可中断模式: 轮询检查
         while sd.get_stream() and sd.get_stream().active:
             if interrupt_check():
                 sd.stop()
+                recorder.unmute()
                 return True
             time.sleep(0.05)
+        recorder.unmute()
         return False
     else:
         sd.wait()
+        recorder.unmute()
         return False
 
 
@@ -303,10 +308,12 @@ BEEP_SEND = _load_chime('send.wav')
 BEEP_READY = _load_chime('ready.wav')
 
 def play_beep(beep_audio):
-    """播放提示音(非阻塞但等完成)"""
+    """播放提示音(非阻塞但等完成)，播放期间 mute 防回音"""
     out = resample_to_a2dp(beep_audio)
+    recorder.mute()
     sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
     sd.wait()
+    recorder.unmute()
 
 
 # 录音看门狗：跟踪最后一次收到音频的时间
@@ -315,26 +322,30 @@ RECORDER_WATCHDOG_TIMEOUT = 10  # 超过10秒没收到音频则重启录音
 
 def feed_audio(data):
     _watchdog["last_audio"] = time.time()
-    asr.feed_audio(data)
+    if data is not None:
+        asr.feed_audio(data)
 
 
 def play_simple(text):
-    if not is_duplex:
-        recorder.stop()
+    recorder.mute()
     sd.stop()  # 确保之前的播放已停止
     time.sleep(PRE_PLAY_DELAY)
     print(f"[TTS] {text}", flush=True)
     audio = tts.synthesize(text)
     if audio is not None:
         print(f"  [TTS] 合成OK: {len(audio)} samples", flush=True)
-        play_audio(audio, first=True)
+        # 直接播放，不经过 play_audio（已经 mute 了）
+        out = resample_to_a2dp(audio)
+        if BT_SILENCE_PREFIX > 0:
+            out = np.concatenate([np.zeros(int(A2DP_SR * BT_SILENCE_PREFIX), dtype=np.float32), out])
+        sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
+        sd.wait()
         print(f"  [TTS] 播放完成", flush=True)
     else:
         print(f"  [TTS] 合成失败!", flush=True)
     time.sleep(POST_PLAY_DELAY)
     asr.reset()
-    if not is_duplex:
-        recorder.start(callback=feed_audio)
+    recorder.unmute()
 
 
 def speak_async(text, then_state=None):
@@ -394,18 +405,13 @@ def start_interrupt_listen(stop_event, text_done_event=None):
             print(f"  [排队] 已收到指令，等待当前任务完成: {cmd}", flush=True)
 
     asr.set_callbacks(on_final=_on_final)
-    if is_duplex:
-        # 全双工模式:录音一直在跑,只需重置ASR
-        asr.reset()
-    else:
-        # 半双工模式:需要重新启动录音
-        asr.reset()
-        recorder.start(callback=feed_audio)
+    # unmute 录音并重置ASR（清空残余回音）
+    asr.reset()
+    recorder.unmute()
 
 def stop_interrupt_listen():
-    """停止监听"""
-    if not is_duplex:
-        recorder.stop()
+    """停止监听：mute 录音防回音"""
+    recorder.mute()
     time.sleep(0.05)
 
 
@@ -419,11 +425,12 @@ def handle_command(cmd):
     chat_log('用户', cmd)
 
     if is_duplex:
-        # 全双工模式:录音不停,直接设置打断监听
+        # 全双工模式:静音麦克风防回音,重置ASR
+        recorder.mute()
         asr.reset()
     else:
-        # 半双工模式:停止录音
-        recorder.stop()
+        # 半双工模式:静音录音
+        recorder.mute()
     time.sleep(0.1)
 
     # 流式文本收集
@@ -501,10 +508,9 @@ def handle_command(cmd):
     first_play = True
     synth_sem = threading.Semaphore(4)  # 最多4个并发合成
 
-    # 全双工模式:录音一直在跑,直接启动打断监听
-    if is_duplex:
-        start_interrupt_listen(stop_event, text_done_event)
-        listening = True
+    # 启动打断监听（unmute + ASR重置）
+    start_interrupt_listen(stop_event, text_done_event)
+    listening = True
 
     def _do_synth(item):
         """合成一个音频项(clause 或 merge)"""
@@ -642,7 +648,7 @@ def handle_command(cmd):
                 aborted = True
                 play_simple("抱歉，处理超时了")
                 break
-            if not listening and not is_duplex:
+            if not listening:
                 start_interrupt_listen(stop_event, text_done_event)
                 listening = True
             time.sleep(0.2)
@@ -675,14 +681,10 @@ def handle_command(cmd):
                     audio, text, next_idx = better
                     span = next_idx - play_idx
 
-        # HFP→A2DP 切换(仅在半双工监听后需要)
-        if listening and not is_duplex:
+        # 播放前确保 mute（play_audio 内部也会 mute，这里提前处理监听状态）
+        if listening:
             stop_interrupt_listen()
             listening = False
-            sd.stop()
-            if BT_SWITCH_DELAY > 0:
-                time.sleep(BT_SWITCH_DELAY)
-            first_play = True  # 切换后需要重新加静音前缀
 
         if stop_event.is_set():
             continue
@@ -737,8 +739,7 @@ def handle_command(cmd):
     # 恢复正常 ASR 回调(打断监听期间会被替换)
     asr.set_callbacks(on_final=on_asr_final)
     asr.reset()
-    if not is_duplex:
-        recorder.start(callback=feed_audio)
+    recorder.unmute()
 
     # 检查是否有排队的指令(包括播报中断时提前取出的)
     queued = queued_early if queued_early else session.pop_queued_command()

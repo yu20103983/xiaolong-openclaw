@@ -96,6 +96,9 @@ class EchoCanceller:
     def process(self, rec_float32: np.ndarray) -> np.ndarray:
         """处理麦克风录音，消除回音
 
+        只有当参考缓冲区有数据（正在播放）时才进行 AEC 处理，
+        否则直接透传原始音频，避免滤波器破坏正常语音。
+
         Args:
             rec_float32: float32 格式麦克风录音, 采样率 = self.sample_rate
 
@@ -103,6 +106,14 @@ class EchoCanceller:
             消除回音后的 float32 音频（长度与输入相同）
         """
         if not self._enabled:
+            return rec_float32
+
+        # 检查参考缓冲区是否有数据（是否正在播放）
+        with self._ref_lock:
+            has_reference = len(self._ref_buffer) >= self.frame_size
+
+        if not has_reference:
+            # 没有播放，直接透传，不经过滤波器
             return rec_float32
 
         # float32 → int16
@@ -116,8 +127,13 @@ class EchoCanceller:
         while pos + self.frame_size <= n_samples:
             rec_frame = rec_int16[pos:pos + self.frame_size]
 
-            # 取参考帧
+            # 取参考帧，不足则透传
             ref_frame = self._get_ref_frame()
+            if ref_frame is None:
+                # 参考缓冲区用完，剩余帧直接透传
+                output_samples.append(rec_int16[pos:])
+                pos = n_samples
+                break
 
             # AEC 处理
             with self._lock:
@@ -141,27 +157,20 @@ class EchoCanceller:
         result = np.concatenate(output_samples).astype(np.float32) / 32768.0
         return result
 
-    def _get_ref_frame(self) -> np.ndarray:
-        """从参考缓冲区取一帧, 不足则填零(静音)"""
+    def _get_ref_frame(self):
+        """从参考缓冲区取一帧。不足一帧则返回 None（表示无播放，应透传）"""
         with self._ref_lock:
             if len(self._ref_buffer) >= self.frame_size:
                 frame = np.array(
                     [self._ref_buffer.popleft() for _ in range(self.frame_size)],
                     dtype=np.int16
                 )
+                return frame
             else:
-                # 参考缓冲区不足 → 当前没有播放, 用静音作为参考
-                available = len(self._ref_buffer)
-                if available > 0:
-                    partial = np.array(
-                        [self._ref_buffer.popleft() for _ in range(available)],
-                        dtype=np.int16
-                    )
-                    frame = np.zeros(self.frame_size, dtype=np.int16)
-                    frame[:available] = partial
-                else:
-                    frame = np.zeros(self.frame_size, dtype=np.int16)
-        return frame
+                # 参考缓冲区不足 → 无播放，返回 None
+                # 清空残余部分数据
+                self._ref_buffer.clear()
+                return None
 
     def reset(self):
         """重置 AEC 状态（清空参考缓冲区，重建滤波器）"""

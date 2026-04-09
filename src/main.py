@@ -264,11 +264,60 @@ def resample_to_a2dp(audio_float32):
     return fast_resample(audio_float32, 24000, A2DP_SR)
 
 
-def _feed_aec_reference(audio_a2dp_sr: np.ndarray):
-    """将播放的音频作为 AEC 参考信号送入（重采样到 16kHz）"""
-    if ECHO_CANCEL == "aec" and aec_engine.enabled:
-        ref_16k = fast_resample(audio_a2dp_sr, A2DP_SR, 16000)
-        aec_engine.feed_reference(ref_16k)
+def _play_with_aec_sync(out: np.ndarray, interrupt_check=None) -> bool:
+    """使用 OutputStream callback 播放，每输出一帧同步 feed AEC 参考信号。
+    返回 True 表示被中断。"""
+    pos = [0]
+    done_event = threading.Event()
+    aec_active = ECHO_CANCEL == "aec" and aec_engine.enabled
+
+    # 预计算 16kHz 重采样比率
+    if aec_active:
+        ratio_16k = 16000 / A2DP_SR
+
+    def _out_callback(outdata, frames, time_info, status):
+        end = min(pos[0] + frames, len(out))
+        length = end - pos[0]
+        outdata[:length, 0] = out[pos[0]:end]
+        if length < frames:
+            outdata[length:] = 0
+
+        # 同步 feed 参考信号到 AEC（每输出一帧就 feed 对应的 16kHz 数据）
+        if aec_active and length > 0:
+            chunk = out[pos[0]:end]
+            ref_16k = fast_resample(chunk, A2DP_SR, 16000)
+            aec_engine.feed_reference(ref_16k)
+
+        pos[0] = end
+        if pos[0] >= len(out):
+            raise sd.CallbackStop()
+
+    # blocksize: 10ms 块，与 AEC frame_size(10ms@16kHz) 对齐
+    blocksize = max(int(A2DP_SR * 0.01), 441)
+
+    stream = sd.OutputStream(
+        samplerate=A2DP_SR, device=A2DP_ID, channels=1,
+        dtype='float32', callback=_out_callback,
+        blocksize=blocksize,
+        finished_callback=lambda: done_event.set()
+    )
+    stream.start()
+
+    # 等待播放完成，同时检查中断
+    interrupted = False
+    while not done_event.is_set():
+        if interrupt_check and interrupt_check():
+            stream.abort()
+            interrupted = True
+            break
+        done_event.wait(timeout=0.05)
+
+    stream.close()
+
+    if aec_active:
+        aec_engine.on_play_done()
+
+    return interrupted
 
 
 def play_audio(audio_float32, first=False, interrupt_check=None):
@@ -278,21 +327,9 @@ def play_audio(audio_float32, first=False, interrupt_check=None):
     if first and BT_SILENCE_PREFIX > 0:
         out = np.concatenate([np.zeros(int(A2DP_SR * BT_SILENCE_PREFIX), dtype=np.float32), out])
     echo_mute()
-    _feed_aec_reference(out)
-    sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
-    if interrupt_check:
-        while sd.get_stream() and sd.get_stream().active:
-            if interrupt_check():
-                sd.stop()
-                echo_unmute()
-                return True
-            time.sleep(0.05)
-        echo_unmute()
-        return False
-    else:
-        sd.wait()
-        echo_unmute()
-        return False
+    interrupted = _play_with_aec_sync(out, interrupt_check)
+    echo_unmute()
+    return interrupted
 
 
 # ============ 全局组件 ============
@@ -333,9 +370,7 @@ def play_beep(beep_audio):
     """播放提示音(非阻塞但等完成)"""
     out = resample_to_a2dp(beep_audio)
     echo_mute()
-    _feed_aec_reference(out)
-    sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
-    sd.wait()
+    _play_with_aec_sync(out)
     echo_unmute()
 
 
@@ -362,9 +397,7 @@ def play_simple(text):
         out = resample_to_a2dp(audio)
         if BT_SILENCE_PREFIX > 0:
             out = np.concatenate([np.zeros(int(A2DP_SR * BT_SILENCE_PREFIX), dtype=np.float32), out])
-        _feed_aec_reference(out)
-        sd.play(out, samplerate=A2DP_SR, device=A2DP_ID)
-        sd.wait()
+        _play_with_aec_sync(out)
         print(f"  [TTS] 播放完成", flush=True)
     else:
         print(f"  [TTS] 合成失败!", flush=True)

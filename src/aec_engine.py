@@ -6,7 +6,7 @@ AEC（声学回音消除）模块 — 基于 pyaec 实现实时回音消除
   用自适应滤波器从麦克风信号中减去回音分量，保留用户真实语音。
 
 使用方式：
-  1. 播放音频时调用 feed_reference() 送入参考信号
+  1. 播放音频时调用 feed_reference() 逐帧送入参考信号（与播放同步）
   2. 麦克风录音回调中调用 process() 处理录音信号
   3. process() 返回消除回音后的干净音频
 
@@ -15,7 +15,6 @@ AEC（声学回音消除）模块 — 基于 pyaec 实现实时回音消除
 
 import numpy as np
 import threading
-from collections import deque
 from typing import Optional
 
 try:
@@ -26,6 +25,64 @@ except ImportError:
     print("[AEC] pyaec 未安装，回音消除不可用。安装: pip install pyaec")
 
 
+class RingBuffer:
+    """高性能 numpy int16 环形缓冲区（比 deque 快 6x）"""
+
+    __slots__ = ('_buf', '_head', '_count', '_maxlen')
+
+    def __init__(self, maxlen: int):
+        self._buf = np.zeros(maxlen, dtype=np.int16)
+        self._head = 0
+        self._count = 0
+        self._maxlen = maxlen
+
+    def __len__(self) -> int:
+        return self._count
+
+    def extend(self, data: np.ndarray):
+        """追加 int16 数据"""
+        n = len(data)
+        if n == 0:
+            return
+        if n >= self._maxlen:
+            # 数据超过容量，只保留末尾
+            self._buf[:] = data[-self._maxlen:]
+            self._head = 0
+            self._count = self._maxlen
+            return
+        tail = (self._head + self._count) % self._maxlen
+        # 分两段写入（处理环绕）
+        first = min(n, self._maxlen - tail)
+        self._buf[tail:tail + first] = data[:first]
+        if first < n:
+            self._buf[:n - first] = data[first:]
+        self._count += n
+        # 溢出时丢弃旧数据
+        if self._count > self._maxlen:
+            overflow = self._count - self._maxlen
+            self._head = (self._head + overflow) % self._maxlen
+            self._count = self._maxlen
+
+    def pop_frame(self, size: int):
+        """取出 size 个样本。不足则返回 None"""
+        if self._count < size:
+            return None
+        if self._head + size <= self._maxlen:
+            frame = self._buf[self._head:self._head + size].copy()
+        else:
+            first = self._maxlen - self._head
+            frame = np.empty(size, dtype=np.int16)
+            frame[:first] = self._buf[self._head:]
+            frame[first:] = self._buf[:size - first]
+        self._head = (self._head + size) % self._maxlen
+        self._count -= size
+        return frame
+
+    def clear(self):
+        self._head = 0
+        self._count = 0
+
+
 class EchoCanceller:
     """实时声学回音消除器
 
@@ -33,20 +90,25 @@ class EchoCanceller:
         frame_size: 每帧样本数 (如 160 = 10ms@16kHz)
         filter_length: 滤波器长度 (越长能消除越长延迟的回音, 默认 6400 = 400ms@16kHz)
         sample_rate: 采样率 (必须与输入音频一致, 通常 16000)
+        tail_frames: 播放结束后额外处理的静音参考帧数（消除残余回音尾巴）
     """
 
     def __init__(self, frame_size: int = 160, filter_length: int = 6400,
-                 sample_rate: int = 16000):
+                 sample_rate: int = 16000, tail_frames: int = 20):
         self.frame_size = frame_size
         self.filter_length = filter_length
         self.sample_rate = sample_rate
+        self.tail_frames = tail_frames  # 播放结束后继续AEC处理的帧数(200ms@10ms/帧)
         self._aec: Optional[Aec] = None
         self._lock = threading.Lock()
 
-        # 参考信号(扬声器播放)环形缓冲区
-        # 存储 int16 样本, 按 frame_size 消费
-        self._ref_buffer = deque()
+        # 参考信号环形缓冲区 (int16, 最多 5 秒)
+        self._ref_buffer = RingBuffer(sample_rate * 5)
         self._ref_lock = threading.Lock()
+
+        # 播放状态跟踪
+        self._playing = False          # 是否正在播放
+        self._tail_remaining = 0       # 播放结束后剩余的尾部帧数
 
         # 统计
         self._frames_processed = 0
@@ -76,6 +138,8 @@ class EchoCanceller:
     def feed_reference(self, audio_float32: np.ndarray):
         """送入参考信号（扬声器正在播放的音频）
 
+        应在播放回调中逐帧调用，保持与实际播放的时间同步。
+
         Args:
             audio_float32: float32 格式音频, 采样率必须为 self.sample_rate
         """
@@ -86,18 +150,22 @@ class EchoCanceller:
         int16_data = np.clip(audio_float32 * 32768, -32768, 32767).astype(np.int16)
 
         with self._ref_lock:
-            # 追加到参考缓冲区
-            self._ref_buffer.extend(int16_data.tolist())
-            # 限制缓冲区大小: 最多存 2 秒参考数据
-            max_samples = self.sample_rate * 2
-            while len(self._ref_buffer) > max_samples:
-                self._ref_buffer.popleft()
+            self._ref_buffer.extend(int16_data)
+            self._playing = True
+            self._tail_remaining = self.tail_frames
+
+    def on_play_done(self):
+        """通知播放已结束（启动尾部回音消除倒计时）"""
+        self._playing = False
+        # 不清空 ref_buffer，让 process() 继续消费剩余参考帧
 
     def process(self, rec_float32: np.ndarray) -> np.ndarray:
         """处理麦克风录音，消除回音
 
-        只有当参考缓冲区有数据（正在播放）时才进行 AEC 处理，
-        否则直接透传原始音频，避免滤波器破坏正常语音。
+        三种状态：
+        1. 正在播放：从 ref_buffer 取参考帧做 AEC
+        2. 播放刚结束（尾部阶段）：用静音参考帧继续 AEC，消除残余回音
+        3. 空闲：直接透传
 
         Args:
             rec_float32: float32 格式麦克风录音, 采样率 = self.sample_rate
@@ -108,12 +176,13 @@ class EchoCanceller:
         if not self._enabled:
             return rec_float32
 
-        # 检查参考缓冲区是否有数据（是否正在播放）
+        # 判断是否需要 AEC 处理
         with self._ref_lock:
-            has_reference = len(self._ref_buffer) >= self.frame_size
+            has_ref = len(self._ref_buffer) >= self.frame_size
 
-        if not has_reference:
-            # 没有播放，直接透传，不经过滤波器
+        need_aec = has_ref or self._playing or self._tail_remaining > 0
+
+        if not need_aec:
             return rec_float32
 
         # float32 → int16
@@ -127,28 +196,32 @@ class EchoCanceller:
         while pos + self.frame_size <= n_samples:
             rec_frame = rec_int16[pos:pos + self.frame_size]
 
-            # 取参考帧，不足则透传
+            # 取参考帧
             ref_frame = self._get_ref_frame()
-            if ref_frame is None:
-                # 参考缓冲区用完，剩余帧直接透传
-                output_samples.append(rec_int16[pos:])
-                pos = n_samples
-                break
 
-            # AEC 处理：传 list of int16（不是 bytes）
+            if ref_frame is None:
+                if self._tail_remaining > 0:
+                    # 尾部阶段：用静音帧作为参考（让滤波器消除残余回音）
+                    ref_frame = np.zeros(self.frame_size, dtype=np.int16)
+                    self._tail_remaining -= 1
+                else:
+                    # 完全结束，剩余帧透传
+                    output_samples.append(rec_int16[pos:])
+                    pos = n_samples
+                    break
+
+            # AEC 处理
             with self._lock:
                 cleaned_list = self._aec.cancel_echo(
                     rec_frame.tolist(), ref_frame.tolist()
                 )
 
-            # pyaec 返回 list of int16 样本
             cleaned_int16 = np.array(cleaned_list, dtype=np.int16)
             output_samples.append(cleaned_int16)
             pos += self.frame_size
-
             self._frames_processed += 1
 
-        # 处理尾部不足一帧的部分（直接透传）
+        # 尾部不足一帧直接透传
         if pos < n_samples:
             output_samples.append(rec_int16[pos:])
 
@@ -157,24 +230,16 @@ class EchoCanceller:
         return result
 
     def _get_ref_frame(self):
-        """从参考缓冲区取一帧。不足一帧则返回 None（表示无播放，应透传）"""
+        """从参考缓冲区取一帧。不足则返回 None"""
         with self._ref_lock:
-            if len(self._ref_buffer) >= self.frame_size:
-                frame = np.array(
-                    [self._ref_buffer.popleft() for _ in range(self.frame_size)],
-                    dtype=np.int16
-                )
-                return frame
-            else:
-                # 参考缓冲区不足 → 无播放，返回 None
-                # 清空残余部分数据
-                self._ref_buffer.clear()
-                return None
+            return self._ref_buffer.pop_frame(self.frame_size)
 
     def reset(self):
         """重置 AEC 状态（清空参考缓冲区，重建滤波器）"""
         with self._ref_lock:
             self._ref_buffer.clear()
+        self._playing = False
+        self._tail_remaining = 0
         if self._enabled:
             with self._lock:
                 try:
@@ -187,6 +252,8 @@ class EchoCanceller:
         """清空参考缓冲区（不重置滤波器）"""
         with self._ref_lock:
             self._ref_buffer.clear()
+        self._playing = False
+        self._tail_remaining = 0
 
     @property
     def stats(self) -> dict:
@@ -194,6 +261,8 @@ class EchoCanceller:
             "enabled": self._enabled,
             "frames_processed": self._frames_processed,
             "ref_buffer_samples": len(self._ref_buffer),
+            "playing": self._playing,
+            "tail_remaining": self._tail_remaining,
         }
 
 
